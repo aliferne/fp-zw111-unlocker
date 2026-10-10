@@ -1,5 +1,6 @@
 #include "log.h"
 
+#include "protocol.h"
 #include "serial.h"
 #include <fcntl.h>
 #include <stdint.h>
@@ -11,12 +12,6 @@
 
 #define FINGER_MOD "/dev/ttyACM0"
 #define DEFAULT_BAUDRATE (B57600)
-#define DEFAULT_DATABITS (CS8)
-// CSTOPB 表示 2bit 的停止位，对其取反以表示 1bit / 1.5bit
-// 协议里面为 1bit，因此直接让 c_cflags 与之做与运算即可
-#define DEFAULT_STOPBITS (~CSTOPB)
-// 协议里面不需要校验，因此直接让 c_cflags 与之做与运算即可
-#define DEFAULT_PARITY (~PARENB)
 
 int main() {
   log_info("now openning device %s...\n", FINGER_MOD);
@@ -40,6 +35,19 @@ int main() {
   char send[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF,
                  0x01, 0x00, 0x03, 0x35, 0x00, 0x39};
   uint8_t buf[12] = {0};
+  uint8_t recv_buf[12] = {0};
+
+  // struct fp_pack *p_send =
+  //     init_fp_pack(FP_DEFAULT_ADDR, FP_CMD_PACK, 0x35, 0x0039, NULL, 3);
+  struct fp_pack *p_recv =
+      init_fp_pack(FP_DEFAULT_ADDR, FP_CMD_PACK, 0x35, 0x0039, NULL, 3);
+  // parse_fp_pack(p_send, buf, LEN(buf));
+  // for (unsigned int i = 0; i < LEN(buf); i++) {
+  //   printf("%02X ", buf[i]);
+  // }
+  // printf("\n");
+
+#if 1
   int bw = write(fd, send, 12);
   if (bw < 0) {
     log_error("write negative bytes!\n");
@@ -56,10 +64,21 @@ int main() {
     return -1;
   }
 
-  log_info("read %d bytes\n", br);
+  log_info("read %d bytes", br);
 
   for (unsigned int i = 0; i < LEN(buf); i++) {
     printf("%02X ", buf[i]);
+  }
+  printf("\n");
+#endif
+
+  log_info("build fp_pack and parse now:");
+
+  build_fp_pack(p_recv, buf, LEN(buf));
+  parse_fp_pack(p_recv, recv_buf, LEN(recv_buf));
+
+  for (unsigned int i = 0; i < LEN(recv_buf); i++) {
+    printf("%02X ", recv_buf[i]);
   }
   printf("\n");
 

@@ -1,15 +1,25 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#define START_CODE (0xEF01)
+#include <stdint.h>
+#include <string.h>
+#include <sys/cdefs.h>
+#include <sys/types.h>
 
-#define CMD_PACK_CODE (0x01)
-#define DAT_PACK_CODE (0x02)
-#define DAT_ENDPACK_CODE (0x08)
+#define FP_PACK_START (0xEF01)
+#define FP_DEFAULT_ADDR (0xFFFFFFFF)
 
-#define DEFAULT_ADDR (0xFFFFFFFF)
+/* pack id */
+enum pack_id {
+  FP_CMD_PACK = 1U,
+  FP_SLAVE_PACK = 7U,
+  FP_DATA_PACK = 2U,
+  FP_DATAEND_PACK = 8U,
+};
+/* pack id end */
 
-#define IS_FP_OK(status_code) ((status_code) == FR_OK)
+#define FP_PACK_SIZE(pack) (sizeof(*(pack)) + (pack)->data_len)
+#define IS_FP_OK(status_code) ((status_code) == FP_OK)
 
 typedef enum {
   FP_OK = 0x00,
@@ -63,5 +73,44 @@ typedef enum {
   // 0x36 ~ 0x3F 未定义
   FP_ERR_ENROLL_TIMES = 0x40
 } fpstat_t;
+
+struct fp_pack {
+  /* default 0xEF01 */
+  uint16_t header;
+  /* 0xFFFFFFFF if not set,
+    otherwise it should be set as the addr of your device */
+  uint32_t dev_addr;
+  /* 1: command pack, 2: data pack(with data behind)
+     8: data pack(no more data)
+     7: this pack is sent from the slave(ack pack) */
+  uint8_t pack_id;
+  /* the length of data plus 2 (number of bytes of checksum) */
+  uint16_t data_len;
+  /* command when this is a cmd pack
+     status_code when this is a slave pack
+     if neither of them, this is not in use */
+  uint8_t code;
+  uint16_t checksum;
+  /* data of this pack which the length is equal to `pack_len` */
+  uint8_t data[];
+};
+
+/*
+ * 基本用法上目前应该初定为：
+ *  1. `init_fp_pack` 出两个结构体，一个接收一个发送
+ *      这一步会根据协议内容确定两个结构体的 data_len
+ *  2. `parse_fp_pack` 发送的结构体，将二进制流发给指纹模块
+ *  3. `build_fp_pack` 接收的结构体，根据结构体内信息进一步除了
+ *  4. `deinit_fp_pack` 掉两个结构体
+ */
+
+// TODO: 这个初始化方式对于只需要接收的来说有点太复杂了，不需要那么多参数
+// 用个宏包装一下
+struct fp_pack *init_fp_pack(uint32_t dev_addr, enum pack_id pid, uint8_t code,
+                             uint16_t checksum, uint8_t *data,
+                             uint16_t data_len);
+void deinit_fp_pack(struct fp_pack *pack);
+void build_fp_pack(struct fp_pack *pack, const uint8_t *buf, size_t len);
+void parse_fp_pack(struct fp_pack *pack, uint8_t *buf, size_t len);
 
 #endif

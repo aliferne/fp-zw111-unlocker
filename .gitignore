@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# zed related
+.zed
+
 # clangd related
 compile_commands.json
 .cache

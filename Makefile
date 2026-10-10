@@ -11,8 +11,9 @@ TARGET := $(BUILD_DIR)/fingerprint
 CFLAGS := -Wall -Wextra -O2 -g -std=c99
 # LIBFLAGS :=
 INCFLAGS := -I$(INC_DIR)
-DEFFLAGS += -DLOG_USE_COLOR
-#	-DSERIAL_DEBUG_ON
+DEFFLAGS += -DLOG_USE_COLOR \
+	-DSERIAL_DEBUG_ON \
+	-DPROTOCOL_DEBUG_ON \
 
 .PHONY: all run clean
 
