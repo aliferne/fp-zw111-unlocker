@@ -6,8 +6,18 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
+/*
+ * 说实话这个协议的代码有点过度设计了…
+ * 变长结构体和一堆长度转来转去的成面条代码了，还不如直接写死那几个常量呢
+ */
+
 #define FP_PACK_START (0xEF01)
 #define FP_DEFAULT_ADDR (0xFFFFFFFF)
+
+/* the total size of these: header, dev_addr, pack_id, pack_len */
+#define PROTOCOL_HEADER_SIZE (9U)
+/* the length of a pack in a uint8_t array */
+#define TOTAL_PACK_SIZE(pack_len) (PROTOCOL_HEADER_SIZE + (pack_len))
 
 /* pack id */
 enum pack_id {
@@ -20,6 +30,8 @@ enum pack_id {
 
 #define FP_PACK_SIZE(pack) (sizeof(*(pack)) + (pack)->data_len)
 #define IS_FP_OK(status_code) ((status_code) == FP_OK)
+#define IS_CODE_VALID(pack_id)                                                 \
+  ((pack_id) == FP_CMD_PACK || (pack_id) == FP_SLAVE_PACK)
 
 typedef enum {
   FP_OK = 0x00,
@@ -84,15 +96,21 @@ struct fp_pack {
      8: data pack(no more data)
      7: this pack is sent from the slave(ack pack) */
   uint8_t pack_id;
-  /* the length of data plus 2 (number of bytes of checksum) */
+  /* the length of data plus 2 (number of bytes of checksum)
+     when `code` is valid, it should plus 1 again
+     **DO NOT USE** this to iterate data array */
+  uint16_t pack_len;
+  /* if the `code` not in use, `pack_len = data_len + 2`
+     otherwise `pack_len = data_len + 3`,
+     **USE** this to iterate the data array */
   uint16_t data_len;
   /* command when this is a cmd pack
      status_code when this is a slave pack
      if neither of them, this is not in use */
   uint8_t code;
   uint16_t checksum;
-  /* data of this pack which the length is equal to `pack_len` */
-  uint8_t data[];
+  /* data that relys outside buffer */
+  const uint8_t *pdata;
 };
 
 /*
@@ -104,11 +122,19 @@ struct fp_pack {
  *  4. `deinit_fp_pack` 掉两个结构体
  */
 
+void fp_pack_init(struct fp_pack *pack, uint32_t dev_addr, enum pack_id pid,
+                  uint16_t pack_len, uint8_t code, uint8_t *data,
+                  uint16_t checksum);
+
 // TODO: 这个初始化方式对于只需要接收的来说有点太复杂了，不需要那么多参数
 // 用个宏包装一下
-struct fp_pack *init_fp_pack(uint32_t dev_addr, enum pack_id pid, uint8_t code,
-                             uint16_t checksum, uint8_t *data,
-                             uint16_t data_len);
+struct fp_pack *init_fp_pack(uint32_t dev_addr, enum pack_id pid,
+                             uint16_t pack_len, uint8_t code, uint8_t *data,
+                             uint16_t checksum);
+#define INIT_RECV_FP_PACK(pack, pack_len)                                      \
+  fp_pack_init((pack), FP_DEFAULT_ADDR, FP_SLAVE_PACK, (pack_len), 0x00, NULL, \
+               0x0000)
+
 void deinit_fp_pack(struct fp_pack *pack);
 void build_fp_pack(struct fp_pack *pack, const uint8_t *buf, size_t len);
 void parse_fp_pack(struct fp_pack *pack, uint8_t *buf, size_t len);
