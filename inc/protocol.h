@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -69,5 +70,60 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n);
 /* delete all finger templates in the flash,
    return 0 when success, 1 when recv_pack_err, 0x11 when empty failed */
 uint8_t fp_empty(int fd);
+
+/* auto enroll finger print, each call enrolls one finger,
+ * the module shines green light when success, red blinking light when failed.
+ *
+ * Args:
+ *  - fd: file descriptor.
+ *  - id: finger print id to store.
+ *  - enroll_times
+ *  - led_ctrl: led off when a finger print is enrolled.
+ *  - return_status: ask for returning at subprocess.
+ *                   that means it'll return data at the key step in the
+ *                   flowchart of the documentation, TURN OFF RECOMMENDED
+ *                   (This function is not opened, it'll always be false)
+ *
+ *  - allow_overwrite: overwrite the id.
+ *                     notice that id is not equal to the finger,
+ *                     you may fail to enroll the same finger even though
+ *                     you allowed overwrite the id
+ *
+ *  - allow_duplicate: reregister the control position.
+ *                     control position is the same sematics as finger print
+ *                     that is to say, you can overwrite the enrolled finger
+ *                     even though there is already one
+ *
+ *  - require_remove: require remove finger to enter next enroll.
+ *                    if this is set, you should remove and put your
+ *                    finger again while enrolling the finger print
+ *
+ * Return status_code
+ */
+uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
+                       bool return_status, bool allow_overwrite,
+                       bool allow_duplicate, bool require_remove);
+
+/* auto identify finger print,
+ * the module shines green light when success, red blinking light when failed.
+ *
+ * Args:
+ *  - fd: file descriptor.
+ *  - score_level: the level to identify finger, range: [1, 5]
+ *                 the larger it is, the harder finger to identify
+ *                 (check more features)
+ *                 2 is recommend by default.
+ *
+ *  - id: finger print id to store.
+ *  - led_ctrl: led off when a finger print is enrolled.
+ *  - return_status: ask for returning at subprocess.
+ *                   that means it'll return data at the key step in the
+ *                   flowchart of the documentation, TURN OFF RECOMMENDED
+ *                   (This function is not opened, it'll always be false)
+ *
+ * Return status_code
+ */
+uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
+                         bool led_ctrl, bool return_status);
 
 #endif

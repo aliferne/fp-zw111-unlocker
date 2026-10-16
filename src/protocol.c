@@ -1,6 +1,7 @@
 #include "protocol.h"
 #include "log.h"
 #include <errno.h>
+#include <math.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,11 +14,15 @@
 #include <unistd.h>
 
 #define LEN(buf) (sizeof((buf)) / sizeof((buf)[0]))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define CLAMP(x, min, max) MIN((max), MAX((x), (min)))
 
 /* max time to wait between two chunks of the same frame */
 #define RECV_TIMEOUT_SEC 1
 #define RECV_BUF_SIZE 64
 #define SEND_BUF_SIZE (FP_GET_PACK_SIZE(0xFF))
+#define DEFAULT_TIMEOUT (1.5f)
 
 #ifdef PROTOCOL_DEBUG_ON
 #define LOG_DEBUG(...) log_debug(__VA_ARGS__)
@@ -124,7 +129,7 @@ static int fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
   return bw;
 }
 
-static int fp_recv_pack(int fd, uint8_t *buf, size_t len) {
+static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
   size_t got = 0;
   size_t want = FP_PACKHEADER_SIZE;
   struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLPRI};
@@ -136,7 +141,7 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len) {
      useless
      the key point to write blog, how to parse a frame */
   while (got < want) {
-    int ready = poll(&pfd, 1, RECV_TIMEOUT_SEC * 1000);
+    int ready = poll(&pfd, 1, timeout * 1000);
     if (ready < 0) {
       if (errno == EINTR) // can retry
         continue;
@@ -173,27 +178,28 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len) {
     -1 when failed, it will set status_code of the slave */
 static int fp_transact(int fd, uint8_t code, const uint8_t *send,
                        size_t send_len, uint8_t *recv, size_t recv_len,
-                       uint8_t *dev_status) {
+                       float timeout, uint8_t *dev_status) {
   if (fp_send_cmd(fd, code, send, send_len) < 0) {
     log_error("Send Failed");
     return -1;
   }
 
-  int nbr = fp_recv_pack(fd, recv, recv_len);
+  int nbr = fp_recv_pack(fd, recv, recv_len, timeout);
   if (nbr == -1) {
     log_error("Recv Failed");
     return -1;
   }
 
   *dev_status = fp_get_status_code(recv);
-  LOG_DEBUG("nbr: %d, p_recv->code: %u", nbr, *dev_status);
+  LOG_DEBUG("nbr: %d, p_recv->code: 0x%02x", nbr, *dev_status);
   return (int)nbr;
 }
 
 uint8_t fp_read_sys_para(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
-  int ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                        &status_code);
 
   if (ret < 0) {
     log_error("check sensor failed(transact ret: %d)", ret);
@@ -204,7 +210,8 @@ uint8_t fp_read_sys_para(int fd) {
 uint8_t fp_check_sensor_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
-  int ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                        &status_code);
 
   if (ret < 0) {
     log_error("check sensor failed(transact ret: %d)", ret);
@@ -212,12 +219,100 @@ uint8_t fp_check_sensor_state(int fd) {
   return status_code;
 }
 
-/* automatically register finger print */
-void fp_auto_enroll(int fd) {
-    
+uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
+                       bool return_status, bool allow_overwrite,
+                       bool allow_duplicate, bool require_remove) {
+  // TODO: max id limit if (id >)
+  /* theoretically enrolling time can be larger than 5(max to 255),
+     but better not */
+  if (enroll_times <= 1 || enroll_times > 5) {
+    log_error("enroll time not in range (1, 5] (current time: %u)",
+              enroll_times);
+    return 0xFF;
+  }
+  log_info("----------------------------------------------------");
+  /* bit1, 6~15 is reserved */
+  return_status = false; // never open it
+  uint16_t param =
+      (((!require_remove) << 5) | ((!allow_duplicate) << 4) |
+       (allow_overwrite << 3) | ((!return_status) << 2) | (led_ctrl << 0));
+
+  /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
+  uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+  uint8_t status_code = 0;
+  int ret = 0;
+
+  ret = fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+                    &status_code);
+  if (ret < 0) {
+    log_error("auto enroll failed(transact ret: %d)", ret);
+    goto end;
+  }
+
+  if (status_code == 0x00) {
+    log_info("enroll success!");
+  } else if (status_code == 0x0B) {
+    log_error("id is invalid!");
+  } else if (status_code == 0x25) {
+    log_error("enroll time is invalid!");
+  } else if (status_code == 0x1F) {
+    log_error("the storage is full! use `allow_overwrite` to overwrite the "
+              "finger storage or delete some fingers!");
+  } else if (status_code == 0x22) {
+    log_error("the id: %u already exists!", id);
+  } else if (status_code == 0x0A) {
+    log_error("can not merge template!");
+  } else if (status_code == 0x27) {
+    log_error("this finger is already enrolled!");
+  } else if (status_code == 0x01) {
+    log_error("enroll failed for unknown reason!");
+  }
+
+end:
+  log_info("----------------------------------------------------");
+  return status_code;
 }
 
-void fp_auto_identify(int fd) {}
+uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
+                         bool led_ctrl, bool return_status) {
+  log_info("====================================================");
+  /* bit1, 6~15 is reserved */
+  return_status = false; // never open it
+  uint16_t param = ((!return_status) << 2 | led_ctrl << 0);
+  
+  score_level = CLAMP(score_level, 1, 5);
+  /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
+  uint8_t send[] = {score_level, id >> 8, id & 0xFF, param >> 8, param & 0xFF};
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+  uint8_t status_code = 0;
+  int ret = 0;
+
+  ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+                    &status_code);
+  if (ret < 0) {
+    log_error("auto identify failed(transact ret: %d)", ret);
+    goto end;
+  }
+
+  if (status_code == 0x00) {
+    log_info("identified!");
+  } else if (status_code == 0x24) {
+    log_error("no finger stored!");
+  } else if (status_code == 0x0B) {
+    log_error("id is invalid!");
+  } else if (status_code == 0x23) {
+    log_error("template doesn't exist!");
+  } else if (status_code == 0x26) {
+    log_error("identify timeout!");
+  } else if (status_code == 0x09) {
+    log_error("can not generate finger features or identify finger!");
+  }
+
+end:
+  log_info("====================================================");
+  return status_code;
+}
 
 /* control light band of the module */
 void fp_config_light(int fd) {}
@@ -225,10 +320,11 @@ void fp_config_light(int fd) {}
 uint8_t fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
-  int ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                        &status_code);
 
   if (ret < 0) {
-    log_error("check sensor failed(transact ret: %d)", ret);
+    log_error("config light failed(transact ret: %d)", ret);
   }
   return status_code;
 }
@@ -236,7 +332,8 @@ uint8_t fp_cancel(int fd) {
 uint8_t fp_sleep(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
-  int ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                        &status_code);
 
   if (ret < 0) {
     log_error("check sensor failed(transact ret: %d)", ret);
@@ -248,11 +345,11 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
-  int ret =
-      fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
+                        DEFAULT_TIMEOUT, &status_code);
 
   if (ret < 0) {
-    log_error("check sensor failed(transact ret: %d)", ret);
+    log_error("delete char/template failed(transact ret: %d)", ret);
   }
   return status_code;
 }
@@ -260,10 +357,11 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
 uint8_t fp_empty(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0;
-  int ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, &status_code);
+  int ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                        &status_code);
 
   if (ret < 0) {
-    log_error("check sensor failed(transact ret: %d)", ret);
+    log_error("empty char/template failed(transact ret: %d)", ret);
   }
   return status_code;
 }

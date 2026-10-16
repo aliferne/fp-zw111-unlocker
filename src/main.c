@@ -3,6 +3,7 @@
 #include "protocol.h"
 #include "serial.h"
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -31,9 +32,11 @@ int main(void) {
     return -1;
   }
 
-  fp_check_sensor_state(fd);
-  fp_read_sys_para(fd);
-  fp_cancel(fd);
+  // fp_check_sensor_state(fd);
+  // fp_read_sys_para(fd);
+  // fp_empty(fd);
+  // fp_auto_enroll(fd, 1, 3, true, false, true, true, true);
+  fp_auto_identify(fd, 2, 0xFFFF, true, true);
 
   close(fd);
   return 0;
