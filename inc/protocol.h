@@ -71,6 +71,41 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n);
    return 0 when success, 1 when recv_pack_err, 0x11 when empty failed */
 uint8_t fp_empty(int fd);
 
+/* 多功能三色灯 (指令码 0x3C) */
+enum fp_light_mode {
+  FP_LIGHT_BREATH = 0x01,   /* 呼吸灯 */
+  FP_LIGHT_FLASH = 0x02,    /* 闪烁灯 */
+  FP_LIGHT_ON = 0x03,       /* 常开灯 */
+  FP_LIGHT_OFF = 0x04,      /* 常闭灯 */
+  FP_LIGHT_FADE_IN = 0x05,  /* 渐开灯 */
+  FP_LIGHT_FADE_OUT = 0x06, /* 渐灭灯 */
+  FP_LIGHT_MARQUEE = 0x07,  /* 跑马灯，仅跑马灯模组适用 */
+};
+
+/* 颜色码按位组合：红 | 绿 | 蓝，例如 FP_LIGHT_RED | FP_LIGHT_BLUE */
+#define FP_LIGHT_RED (0x04)
+#define FP_LIGHT_GREEN (0x02)
+#define FP_LIGHT_BLUE (0x01)
+
+/* 控制模组的三色灯。
+ *
+ * Args:
+ *  - fd: file descriptor.
+ *  - mode: 灯效，取 enum fp_light_mode.
+ *  - start_color: 起始颜色，普通呼吸灯时表示由灭到亮的颜色，
+ *                 其他功能与 end_color 保持一致。
+ *  - end_color: 结束颜色（仅呼吸灯使用）；闪烁灯时该字节表示占空比，
+ *               高四位:低四位，例如 0x38 表示 3:8。
+ *  - cycles: 循环次数，0x00 表示无限循环，最大值 0xFF；
+ *            仅呼吸灯、闪烁灯、渐开渐闭灯有效。
+ *  - period: 周期，1 表示 0.1 秒，范围 1-100，
+ *            仅呼吸灯、闪烁灯、渐开渐闭灯有效。
+ *
+ * Return status_code, 0xFF when recv_pack_err
+ */
+uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
+                         uint8_t end_color, uint8_t cycles, uint8_t period);
+
 /* auto enroll finger print, each call enrolls one finger,
  * the module shines green light when success, red blinking light when failed.
  *

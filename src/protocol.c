@@ -315,7 +315,24 @@ end:
 }
 
 /* control light band of the module */
-void fp_config_light(int fd) {}
+uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
+                         uint8_t end_color, uint8_t cycles, uint8_t period) {
+  /* 功能码, 起始颜色, 结束颜色/占空比, 循环次数, 时间 */
+  uint8_t send[] = {(uint8_t)mode, start_color, end_color, cycles, period};
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+  uint8_t status_code = 0;
+  int ret = fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
+                        DEFAULT_TIMEOUT, &status_code);
+
+  if (ret < 0) {
+    log_error("control light failed(transact ret: %d)", ret);
+    return 0xFF;
+  }
+  if (status_code != 0x00) {
+    log_error("control light failed(status code: 0x%02X)!", status_code);
+  }
+  return status_code;
+}
 
 uint8_t fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
