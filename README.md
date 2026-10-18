@@ -13,7 +13,7 @@ Blogs:
 - [PAM 模块学习总结]: https://zhuanlan.zhihu.com/p/663757925
 - [C 语言变长结构体]: https://www.cnblogs.com/liuxiaomeng/p/8377308.html
 - [ArchWiki Linux PAM]: https://wiki.archlinux.org.cn/title/PAM
-- [libpam-doc]: http://www.fifi.org/doc/libpam-doc/html/pam_modules
+- [libpam-doc]: http://www.fifi.org/doc/libpam-doc/html
 
 Opensource Projects:
 
