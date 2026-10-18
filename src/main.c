@@ -26,7 +26,7 @@ int main(void) {
   /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
      length is handled by fp_recv_pack instead of the tty layer */
   if (serial_set_attr(fd, DEFAULT_BAUDRATE, DATABIT_8, STOPBIT_1, PARITY_NON,
-                      150, 225) != 0) {
+                      0, 0) != 0) {
     log_error("failed to configure the serial port!");
     close(fd);
     return -1;
