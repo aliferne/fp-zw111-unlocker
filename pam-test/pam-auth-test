@@ -1,0 +1,2 @@
+auth 	required pam_auth_test.so
+account required pam_auth_test.so
