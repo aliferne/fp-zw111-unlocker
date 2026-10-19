@@ -14,6 +14,9 @@ Blogs:
 - [C 语言变长结构体]: https://www.cnblogs.com/liuxiaomeng/p/8377308.html
 - [ArchWiki Linux PAM]: https://wiki.archlinux.org.cn/title/PAM
 - [libpam-doc]: http://www.fifi.org/doc/libpam-doc/html
+- [flag fPIC]: https://zhuanlan.zhihu.com/p/368364069
+- [Archwiki fprint]: https://wiki.archlinuxcn.org/wiki/Fprint
+- [Archwiki SDDM ch2.10]: https://wiki.archlinuxcn.org/wiki/SDDM#使用指纹识别器
 
 Opensource Projects:
 
