@@ -1,6 +1,6 @@
 // should `sudo apt install libpam-dev` first
-#include <security/_pam_types.h>
 #include <security/pam_appl.h>
+#include <security/pam_misc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +16,8 @@ static int conv_func(int num_msg, const struct pam_message **msg,
   struct creds *c = (struct creds *)appdata_ptr;
   struct pam_response *reply;
 
+  fprintf(stderr, "[test_pam] here\n");
+
   if (num_msg <= 0 || num_msg > PAM_MAX_NUM_MSG) {
     return PAM_CONV_ERR;
   }
@@ -23,7 +25,8 @@ static int conv_func(int num_msg, const struct pam_message **msg,
   if (!reply)
     return PAM_BUF_ERR;
 
-  for (int i = 0; i > num_msg; i++) {
+  for (int i = 0; i < num_msg; i++) {
+    fprintf(stderr, "[test_pam] msg: %s\n", msg[i]->msg);
     switch (msg[i]->msg_style) {
     case PAM_PROMPT_ECHO_OFF:
       /* 密码提示：返回预设密码 */
@@ -56,6 +59,7 @@ int main(int argc, char **argv) {
   pam_handle_t *pamh = NULL;
   int ret;
 
+  // 把 user 设置成 NULL 之后就会调用上面那个对话函数
   ret = pam_start(argv[1], argv[2], &conv, &pamh);
   if (ret != PAM_SUCCESS) {
     fprintf(stderr, "pam_start failed: %s\n", pam_strerror(NULL, ret));

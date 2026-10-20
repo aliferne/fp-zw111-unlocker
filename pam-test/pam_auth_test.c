@@ -2,14 +2,15 @@
 #define PAM_SM_ACCOUNT
 
 #include <security/pam_appl.h>
+#include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdio.h>
 #include <string.h>
 
 // 不建议明文存储到代码里，这里只用于学习用
 // 实际上需要通过 pwd.h 来拿系统内部存储的密码
-#define TEST_USER "test"
-#define TEST_PASSWD "test"
+#define TEST_USER "testusr"
+#define TEST_PASSWD "testpwd"
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                                    const char **argv) {
@@ -19,14 +20,27 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   fprintf(stderr, "[pam_testauth] pam_sm_authenticate called\n");
 
+  // const struct pam_conv *conv = NULL;
+  // retval = pam_get_item(pamh, PAM_CONV, (const void **)&conv);
+  // fprintf(stderr, "[pam_testauth] retval: %s\n", pam_strerror(pamh, retval));
+  // fprintf(stderr, "[pam_testauth] retval: %s\n", ((const char
+  // **)(conv->appdata_ptr))[0]); fprintf(stderr, "[pam_testauth] retval: %s\n",
+  // ((const char **)(conv->appdata_ptr))[1]);
+
+  // 这里没东西
+  // fprintf(stderr, "[pam_testauth] argv: ");
+  // for (int i = 0; i < argc; i++) {
+  //     fprintf(stderr, "%s ", argv[i]);
+  // }
+  // fprintf(stderr, "\n");
+
   retval = pam_get_user(pamh, &user, "Username: ");
   if (retval != PAM_SUCCESS) {
     fprintf(stderr, "[pam_testauth] pam_get_user failed: %d\n", retval);
     return retval;
   }
 
-  // reward hacking 罢了，没见到哪个函数比较合适的就用这个了
-  retval = pam_get_user(pamh, &password, "Password: ");
+  retval = pam_get_authtok(pamh, PAM_AUTHTOK, &password, "Password: ");
   if (retval != PAM_SUCCESS) {
     fprintf(stderr, "[pam_testauth] pam_get_authtok failed: %d\n", retval);
     return retval;
@@ -34,9 +48,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   fprintf(stderr, "[pam_testauth] got user='%s' pass='%s'\n", user, password);
 
-  // 这里比较简单了，实际上需要考虑用户输入的字符串长度
-  if (strncmp(user, TEST_USER, strlen(TEST_USER)) == 0 &&
-      strncmp(password, TEST_PASSWD, strlen(TEST_PASSWD)) == 0) {
+  if (strcmp(user, TEST_USER) == 0 && strcmp(password, TEST_PASSWD) == 0) {
     fprintf(stderr, "[pam_testauth] MATCH -> PAM_SUCCESS\n");
     return PAM_SUCCESS;
   }

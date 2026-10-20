@@ -33,8 +33,8 @@ sudo apt install libpam-dev -y
 注意一下实际用的时候不建议直接明文将密码等放进去，调 gdb 或者 ltrace 很容易就能破解出来：
 
 ```bash
-> ltrace -e strncmp ./test_pam pam-auth-test ss ss 2>&1 | grep "pam_auth_test.so"
-pam_auth_test.so->strncmp("ss", "test", 4)       = -1
+> ltrace -e strcmp ./test_pam pam-auth-test ss ss 2>&1 | grep "pam_auth_test.so"
+pam_auth_test.so->strcmp("ss", "test", 4)       = -1
 ```
 
 然后一眼就知道密码是什么了，再不济用：
@@ -49,9 +49,10 @@ String dump of section '.rodata':
   [    60]  Password:
   [    70]  [pam_testauth] pam_get_authtok failed: %d\n
   [    a0]  [pam_testauth] got user='%s' pass='%s'\n
-  [    c8]  test
-  [    d0]  [pam_testauth] MATCH -> PAM_SUCCESS\n
-  [    f8]  [pam_testauth] MISMATCH -> PAM_AUTH_ERR\n
+  [    c8]  testusr
+  [    d0]  testpwd
+  [    d8]  [pam_testauth] MATCH -> PAM_SUCCESS\n
+  [   100]  [pam_testauth] MISMATCH -> PAM_AUTH_ERR\n
 ```
 
 或者反汇编啥的，硬猜也能猜出点东西出来
@@ -100,11 +101,26 @@ gcc -o pam_auth_test.c test_pam -lpam
 接下来运行：
 
 ```bash
-> ./test_pam pam-auth-test test test
+> ./test_pam pam-auth-test testusr testpwd
 [pam_testauth] pam_sm_authenticate called
-[pam_testauth] got user='test' pass='test'
+[test_pam] here
+[test_pam] msg: Password:
+[pam_testauth] got user='testusr' pass='testpwd'
 [pam_testauth] MATCH -> PAM_SUCCESS
 pam_authenticate -> 0 (Success)
+```
+
+当然也可以用 `pamtester` 去测试：
+
+```bash
+> pamtester -v pam-auth-test testusr authenticate
+pamtester: invoking pam_start(pam-auth-test, testusr, ...)
+pamtester: performing operation - authenticate
+[pam_testauth] pam_sm_authenticate called
+Password:
+[pam_testauth] got user='testusr' pass='testpwd'
+[pam_testauth] MATCH -> PAM_SUCCESS
+pamtester: successfully authenticated
 ```
 
 PAM 模块学习草稿基本写这么简单就行，后面写博客再扩充
@@ -173,6 +189,10 @@ auth    required        pam_fprint_zw111.so  # 这个是我们添加的
 ```
 
 新建 `pam_fprint_zw111.c` 并编写模块交互代码。
+
+```bash
+> gcc -fPIC -shared -o pam_fprint_zw111.so pam_fprint_zw111.c && sudo ln -s $(pwd)/pam_fprint_zw111.so /lib/x86_64-linux-gnu/security
+```
 
 然后测试
 
