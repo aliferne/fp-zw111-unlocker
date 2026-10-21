@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define RECV_BUF_SIZE 64U
-#define FINGER_MOD "/dev/ttyUSB0"
+#define FINGER_MOD "/dev/ttyUSB1"
 #define DEFAULT_BAUDRATE (B57600)
 
 int main(void) {

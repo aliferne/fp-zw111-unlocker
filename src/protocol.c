@@ -1,12 +1,12 @@
 #include "protocol.h"
 #include "log.h"
 #include <errno.h>
-#include <math.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <sys/select.h>
@@ -197,26 +197,36 @@ static int fp_transact(int fd, uint8_t code, const uint8_t *send,
 
 uint8_t fp_read_sys_para(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
                         &status_code);
 
   if (ret < 0) {
-    log_error("check sensor failed(transact ret: %d)", ret);
+    log_error("read sys para failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("read sys para failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_check_sensor_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
                         &status_code);
 
   if (ret < 0) {
     log_error("check sensor failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("check sensor failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
@@ -240,7 +250,7 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = 0;
 
   ret = fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15,
@@ -271,7 +281,7 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
 
 end:
   log_info("----------------------------------------------------");
-  return status_code;
+  return status_code == 0x00 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
@@ -285,7 +295,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {score_level, id >> 8, id & 0xFF, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = 0;
 
   ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
@@ -311,7 +321,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
 
 end:
   log_info("====================================================");
-  return status_code;
+  return status_code == 0x00 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 /* control light band of the module */
@@ -320,65 +330,86 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
   /* 功能码, 起始颜色, 结束颜色/占空比, 循环次数, 时间 */
   uint8_t send[] = {(uint8_t)mode, start_color, end_color, cycles, period};
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
                         DEFAULT_TIMEOUT, &status_code);
 
   if (ret < 0) {
     log_error("control light failed(transact ret: %d)", ret);
-    return 0xFF;
+    return EXIT_FAILURE;
   }
   if (status_code != 0x00) {
     log_error("control light failed(status code: 0x%02X)!", status_code);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
                         &status_code);
 
   if (ret < 0) {
-    log_error("config light failed(transact ret: %d)", ret);
+    log_error("cancel failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("cancel failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_sleep(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
                         &status_code);
 
   if (ret < 0) {
-    log_error("check sensor failed(transact ret: %d)", ret);
+    log_error("sleep failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("sleep failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
   int ret = fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
                         DEFAULT_TIMEOUT, &status_code);
 
   if (ret < 0) {
     log_error("delete char/template failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("delete char/template failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 uint8_t fp_empty(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t status_code = 0;
+  uint8_t status_code = 0xFF;
   int ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
                         &status_code);
 
   if (ret < 0) {
     log_error("empty char/template failed(transact ret: %d)", ret);
+    return EXIT_FAILURE;
   }
-  return status_code;
+  if (status_code != 0x00) {
+    log_error("empty char/template failed(status code: 0x%02X)", status_code);
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }

@@ -51,24 +51,22 @@ uint16_t fp_get_checksum(const uint8_t *buf, size_t len);
 /* the confirm code (a.k.a. status code) at offset FP_OFF_CODE */
 uint8_t fp_get_status_code(const uint8_t *recv_buf);
 
-/* return 1 when recv_pack_err, 0 when success */
+/* All command functions below return 0 on success (device confirm code 0x00)
+ * and non-zero on ANY failure (transport/recv error, or a device confirm code
+ * != 0x00). Failure details are written to the log. */
 uint8_t fp_read_sys_para(int fd);
 
-/* return 0 when success, 1 when recv_pack_err, 0x29 when operation failed */
 uint8_t fp_check_sensor_state(int fd);
 
-/* cancel auto enroll & auto identify, return 1 when failed */
+/* cancel auto enroll & auto identify */
 uint8_t fp_cancel(int fd);
 
-/* return 0 when success, 1 when recv_pack_err, 0x29 when operation failed */
 uint8_t fp_sleep(int fd);
 
-/* delete N finger templates start from the specific ID number
-   return 0 when success, 1 when recv_pack_err, 0x10 when delete failed */
+/* delete N finger templates start from the specific ID number */
 uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n);
 
-/* delete all finger templates in the flash,
-   return 0 when success, 1 when recv_pack_err, 0x11 when empty failed */
+/* delete all finger templates in the flash */
 uint8_t fp_empty(int fd);
 
 /* 多功能三色灯 (指令码 0x3C) */
@@ -101,7 +99,7 @@ enum fp_light_mode {
  *  - period: 周期，1 表示 0.1 秒，范围 1-100，
  *            仅呼吸灯、闪烁灯、渐开渐闭灯有效。
  *
- * Return status_code, 0xFF when recv_pack_err
+ * Return 0 on success, non-zero on failure
  */
 uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
                          uint8_t end_color, uint8_t cycles, uint8_t period);
@@ -133,7 +131,7 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
  *                    if this is set, you should remove and put your
  *                    finger again while enrolling the finger print
  *
- * Return status_code
+ * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
                        bool return_status, bool allow_overwrite,
@@ -156,7 +154,7 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
  *                   flowchart of the documentation, TURN OFF RECOMMENDED
  *                   (This function is not opened, it'll always be false)
  *
- * Return status_code
+ * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
                          bool led_ctrl, bool return_status);
