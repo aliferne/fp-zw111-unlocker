@@ -1,4 +1,16 @@
-# PAM 模块的学习
+# 博客草稿
+
+- title: 为 debian 自制指纹验证功能 —— Linux 系统编程与 PAM 模块开发
+- sequence:
+  1. ZW111 模块基础功能开发与命令行程序封装
+  2. Linux PAM 模块介绍与 PAM 动态库开发
+  3. 为 ZW111 打通 “任督 PAM 脉”
+
+# ZW111 模块开发
+
+TODO:
+
+# PAM 模块
 
 需要注意，自己写 PAM 模块一定绝对务必要处理好 PAM 模块的状态码，千万不要一个 `(void)` 过去直接给人家忽略掉，不然你的电脑安全风险会非常非常高！
 
@@ -70,10 +82,11 @@ fPIC 标志表示需要生成位置无关的代码，因为我们要编译出来
 接下来将 so 链接到对应的位置，我这里在 `/lib/x86_64-linux-gnu/security` 中
 
 ```bash
-sudo ln -s $(pwd)/pam_auth_test.so /lib/x86_64-linux-gnu/security
+# 测完之后记得删掉
+sudo ln $(pwd)/pam_auth_test.so /lib/x86_64-linux-gnu/security
 ```
 
-我这里链接的话用的是软链接，我个人比较推荐大家用硬链接，这样目标文件夹就会有一个副本，大家都指向相同的 inode, 修改任意一处另一处都会同步被修改，当然最重要的是删了一个，另一个不受影响，我这里随便写着玩的就无所谓了
+注意链接最好用硬链接，只要你的盘在同一个文件系统内就行，硬链接的好处在于两个文件都指向了同一 inode 且修改任何一个文件的内容，其他文件都会跟着更新，删除任意文件都不会导致已有的文件失效，除非全删光。
 
 然后编写服务文件
 
@@ -87,7 +100,8 @@ EOF
 最后链接这个服务文件
 
 ```bash
-sudo ln -s $(pwd)/pam-auth-test /etc/pam.d
+# 测完之后记得删掉
+sudo ln $(pwd)/pam-auth-test /etc/pam.d
 ```
 
 这样子通路就基本搭建完毕了，我们接下来自己写一个[应用程序](./pam_auth_test.c)
@@ -141,10 +155,11 @@ KDE 和 SDDM 各自会占用一个 tty， SDDM 在验证通过之后你再切过
 首先还是老规矩，简单编写一个[模块](./pam_kde_auth_test.c)并链接过去，然后测试一下
 
 ```bash
-> gcc -fPIC -shared -o pam_kde_auth_test.so pam_kde_auth_test.c && sudo ln -s /$(pwd)/pam_kde_auth_test.so /lib/x86_64-linux-gnu/security
+# 这里测完之后记得删掉
+> gcc -fPIC -shared -o pam_kde_auth_test.so pam_kde_auth_test.c && sudo ln $(pwd)/pam_kde_auth_test.so /lib/x86_64-linux-gnu/security
 ```
 
-注意， KDE 的 PAM 服务文件在 `/usr/lib/pam.d` 里面，这里有个优先级的问题，一般是 `/etc/pam.d` 里面的优先调用，我们接下来修改 `kde-fingerprint` 即可，其他的别动：
+注意， KDE 的 PAM 服务文件在 `/usr/lib/pam.d` 里面，你 `ls` 之后会发现有三个 kde 相关的，分别对应三种解锁方式：密码，指纹，卡片，这三个验证方式是独立的，任意一个验证成功都能解锁，而我们之前一直在讲的都是 `/etc/pam.d` 里面的文件，那么这里就有个配置文件查询优先级的问题，一般是 `/etc/pam.d` 里面的优先调用，我们接下来修改 `kde-fingerprint` 即可，其他的别动：
 
 ```plain text
 # ...
@@ -191,12 +206,63 @@ auth    required        pam_fprint_zw111.so  # 这个是我们添加的
 新建 `pam_fprint_zw111.c` 并编写模块交互代码。
 
 ```bash
-> gcc -fPIC -shared -o pam_fprint_zw111.so pam_fprint_zw111.c && sudo ln -s $(pwd)/pam_fprint_zw111.so /lib/x86_64-linux-gnu/security
+> gcc -fPIC -shared -o pam_fprint_zw111.so pam_fprint_zw111.c && sudo ln $(pwd)/pam_fprint_zw111.so /lib/x86_64-linux-gnu/security
 ```
 
-然后测试
+然后测试，发现可以直接解锁，然后我们只要对接写好的指纹模块即可
 
-# 参考资料
+# 打通 “任督 PAM 脉”
+
+需要固定设备名称，不然很不方便，udev 规则，这里直接放博客链接，不详细写
+
+```bash
+> udevadm info -a -n /dev/ttyUSB1
+...
+looking at device '/devices/pci0000:00/0000:00:08.1/0000:06:00.4/usb3/3-1/3-1.2/3-1.2:1.0/ttyUSB1/tty/t>
+  KERNEL=="ttyUSB1"
+  # 需要注意下下面写 udev rules 时应该写 usb, 这里不知道为什么是 tty，可能是我连了扩展坞导致的
+  SUBSYSTEM=="tty"
+  DRIVER==""
+...
+```
+
+然后在 `/etc/udev/rules.d/` 创建文件 `fprint_zw111.rules` 并写入：`KERNELS=="3-1.2:1.0", SUBSYSTEMS=="usb", MODE:="0666", SYMLINK+="FP_ZW111"`
+
+最后再 `sudo udevadm control --reload-rules && sudo udevadm trigger` 以使得规则生效
+
+然后就会得到：
+
+```bash
+> ls /dev/FP_ZW111
+/dev/FP_ZW111
+```
+
+此时我们完成了固定命名的操作，可以更加愉快地开发了。
+
+然后我们不再使用锁屏去测试，而是继续使用 `pamtester`：
+
+```bash
+> sudo pamtester -v kde-fingerprint $USER authenticate
+pamtester: invoking pam_start(kde-fingerprint, ferne, ...)
+pamtester: performing operation - authenticate
+23:09:41 INFO  src/pam_fprint_zw111.c:38: pam_sm_authenticate called
+23:09:41 INFO  src/pam_fprint_zw111.c:40: now openning device /dev/FP_ZW111...
+23:09:41 INFO  src/pam_fprint_zw111.c:51: device /dev/FP_ZW111 opened, now configuring terminal parameters...
+23:09:41 DEBUG src/serial.c:63: request from fd: 3, set baudrate: 4097, databit: 3, stopbit: 0, parity: 0, vtime: 0, vmin: 0
+
+23:09:41 INFO  src/protocol.c:289: ====================================================
+23:09:41 DEBUG src/protocol.c:99: fill pack: id=1 code=32 data_len=5 total_len=17 checksum=0240
+send:         EF 01 FF FF FF FF 01 00 08 32 02 FF FF 00 05 02 40
+23:09:41 INFO  src/protocol.c:128: write 17 bytes
+recv:         EF 01 FF FF FF FF 07 00 08 00 05 00 01 07 BB 00 D7
+23:09:42 DEBUG src/protocol.c:194: nbr: 17, p_recv->code: 0x00  # 此处是我把手指放上去了
+23:09:42 INFO  src/protocol.c:309: identified!
+23:09:42 INFO  src/protocol.c:323: ====================================================
+Password: # 直接按 enter 就行
+pamtester: successfully authenticated
+```
+
+# 参考资料（TODO: 还需要从 README 中补充一些过来）
 
 1. https://zhuanlan.zhihu.com/p/663757925
 2. https://wiki.archlinux.org.cn/title/PAM

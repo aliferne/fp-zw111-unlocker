@@ -20,7 +20,7 @@
 #include <unistd.h>
 
 #define RECV_BUF_SIZE 64U
-#define FINGER_MOD "/dev/ttyUSB0"
+#define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
 
 /*
@@ -39,11 +39,15 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   log_info("now openning device %s...", FINGER_MOD);
   int fd = 0;
+  int count = 0;
   while ((fd = open(FINGER_MOD, O_RDWR | O_NOCTTY | O_NDELAY)) == -1) {
     log_error("can not open device %s! retrying...", FINGER_MOD);
-    //sleep(1);
-    return -1;
+    sleep(1);
+    if (++count > 30) {
+      return -1;
+    }
   }
+  count = 0;
   // if (fd == -1) {
   //   log_error("can not open device %s!", FINGER_MOD);
   //   return -1;
@@ -64,6 +68,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   while (fp_auto_identify(fd, 2, 0xFFFF, true, true) != 0x00) {
     sleep(1); // wait for next retry
+    if (++count > 30) {
+      return -1;
+    }
   }
 
   return PAM_SUCCESS;

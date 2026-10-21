@@ -17,6 +17,7 @@ Blogs:
 - [flag fPIC]: https://zhuanlan.zhihu.com/p/368364069
 - [Archwiki fprint]: https://wiki.archlinuxcn.org/wiki/Fprint
 - [Archwiki SDDM ch2.10]: https://wiki.archlinuxcn.org/wiki/SDDM#使用指纹识别器
+- [Linux 固定 USB 串口设备名称]: https://zhuanlan.zhihu.com/p/544993864
 
 Opensource Projects:
 
