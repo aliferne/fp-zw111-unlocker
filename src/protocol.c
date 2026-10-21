@@ -1,16 +1,11 @@
 #include "protocol.h"
 #include "log.h"
+#include "serial.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
-#include <sys/select.h>
-#include <termios.h>
 #include <unistd.h>
 
 #define LEN(buf) (sizeof((buf)) / sizeof((buf)[0]))
@@ -125,7 +120,7 @@ static int fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
     log_error("write negative bytes!");
     return -1;
   }
-  log_info("write %d bytes", bw);
+  LOG_DEBUG("write %d bytes", bw);
   return bw;
 }
 
@@ -177,6 +172,7 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
 /* public api to build fp_cmd, returns numbers of bytes read when success
     -1 when failed, it will set status_code of the slave */
 static int fp_transact(int fd, uint8_t code, const uint8_t *send,
+
                        size_t send_len, uint8_t *recv, size_t recv_len,
                        float timeout, uint8_t *dev_status) {
   if (fp_send_cmd(fd, code, send, send_len) < 0) {
@@ -193,6 +189,31 @@ static int fp_transact(int fd, uint8_t code, const uint8_t *send,
   *dev_status = fp_get_status_code(recv);
   LOG_DEBUG("nbr: %d, p_recv->code: 0x%02x", nbr, *dev_status);
   return (int)nbr;
+}
+
+/* return fd when successfully opened, -1 if not */
+int fp_open(const char *devname, unsigned int baudrate) {
+  log_info("now openning device %s...", devname);
+
+  int fd = open(devname, O_RDWR | O_NOCTTY | O_NDELAY);
+  if (fd == -1) {
+    log_error("can not open device %s!", devname);
+    return -1;
+  }
+  log_info("device %s opened, "
+           "now configuring terminal parameters...",
+           devname);
+
+  fcntl(fd, F_SETFL, 0);
+  /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
+     length is handled by fp_recv_pack instead of the tty layer */
+  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0) !=
+      0) {
+    log_error("failed to configure the serial port!");
+    close(fd);
+    return -1;
+  }
+  return fd;
 }
 
 uint8_t fp_read_sys_para(int fd) {
@@ -290,7 +311,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
   uint16_t param = ((!return_status) << 2 | led_ctrl << 0);
-  
+
   score_level = CLAMP(score_level, 1, 5);
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {score_level, id >> 8, id & 0xFF, param >> 8, param & 0xFF};

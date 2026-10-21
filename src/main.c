@@ -12,25 +12,9 @@
 #define DEFAULT_BAUDRATE (B57600)
 
 int main(void) {
-  log_info("now openning device %s...", FINGER_MOD);
-  int fd = open(FINGER_MOD, O_RDWR | O_NOCTTY | O_NDELAY);
-  if (fd == -1) {
-    log_error("can not open device %s!", FINGER_MOD);
+  int fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE);
+  if (fd == -1)
     return -1;
-  }
-  log_info("device %s opened, "
-           "now configuring terminal parameters...",
-           FINGER_MOD);
-
-  fcntl(fd, F_SETFL, 0);
-  /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
-     length is handled by fp_recv_pack instead of the tty layer */
-  if (serial_set_attr(fd, DEFAULT_BAUDRATE, DATABIT_8, STOPBIT_1, PARITY_NON,
-                      0, 0) != 0) {
-    log_error("failed to configure the serial port!");
-    close(fd);
-    return -1;
-  }
 
   // fp_check_sensor_state(fd);
   // fp_read_sys_para(fd);
@@ -59,6 +43,6 @@ int main(void) {
   //   sleep(1);
   // }
 
-  close(fd);
+  fp_close(fd);
   return 0;
 }

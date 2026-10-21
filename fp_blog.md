@@ -262,6 +262,8 @@ Password: # 直接按 enter 就行
 pamtester: successfully authenticated
 ```
 
+不过后面我们依然需要锁屏测试，那么怎么看日志呢？很简单，借助 `ctrl+alt+fx` 就能打开任意 tty 界面（不过需要注意 KDE 和 SDDM 本身会占用 tty, 不要开到这两个），然后登录一下，输入 `sudo journalctl -f | grep kwin_wayland_wrapper` 并确认，此时这个 tty 界面会一直显示该服务相关内容，我们就可以对 ZW111 模块的情况进行监视了。
+
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 
 1. https://zhuanlan.zhihu.com/p/663757925

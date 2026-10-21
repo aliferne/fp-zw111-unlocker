@@ -85,6 +85,10 @@ enum fp_light_mode {
 #define FP_LIGHT_GREEN (0x02)
 #define FP_LIGHT_BLUE (0x01)
 
+int fp_open(const char *devname, unsigned int baudrate);
+
+#define fp_close(fd) close((fd))
+
 /* 控制模组的三色灯。
  *
  * Args:
