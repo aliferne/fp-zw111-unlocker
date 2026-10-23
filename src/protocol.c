@@ -4,20 +4,46 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#define LEN(buf) (sizeof((buf)) / sizeof((buf)[0]))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define CLAMP(x, min, max) MIN((max), MAX((x), (min)))
+#define FP_HEAD_SIZE (2U)
+#define FP_DEVADDR_SIZE (4U)
+#define FP_PACKID_SIZE (1U)
+#define FP_PACKLEN_SIZE (2U)
+#define FP_CHECKSUM_SIZE (2U)
+/* the total size of these: header, dev_addr, pack_id, pack_len */
+#define FP_PACKHEADER_SIZE                                                     \
+  (FP_HEAD_SIZE + FP_DEVADDR_SIZE + FP_PACKID_SIZE + FP_PACKLEN_SIZE)
+
+/* field offsets inside a frame */
+#define FP_OFF_HEAD (0U)
+#define FP_OFF_DEVADDR (FP_OFF_HEAD + FP_HEAD_SIZE)
+#define FP_OFF_PACKID (FP_OFF_DEVADDR + FP_DEVADDR_SIZE)
+#define FP_OFF_PACKLEN (FP_OFF_PACKID + FP_PACKID_SIZE)
+#define FP_OFF_CODE (FP_PACKHEADER_SIZE)
+#define FP_OFF_DATA (FP_OFF_CODE + 1U)
+
+/* checksum covers bytes [FP_OFF_CHECKSUM_START, total_len - FP_CHECKSUM_SIZE)
+ */
+#define FP_OFF_CHECKSUM_START (FP_OFF_PACKID)
 
 /* max time to wait between two chunks of the same frame */
 #define RECV_TIMEOUT_SEC 1
 #define RECV_BUF_SIZE 64
 #define SEND_BUF_SIZE (FP_GET_PACK_SIZE(0xFF))
 #define DEFAULT_TIMEOUT (1.5f)
+
+/* the buffer length of fp_pack to send (pack_len already includes checksum) */
+#define FP_GET_PACK_SIZE(pack_len) (FP_PACKHEADER_SIZE + (pack_len))
+
+/* a command/slave pack carries a code byte right after the pack header */
+#define IS_CODE_VALID(pack_id) ((pack_id) == 1U || (pack_id) == 7U)
+
+#define LEN(buf) (sizeof((buf)) / sizeof((buf)[0]))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define CLAMP(x, min, max) MIN((max), MAX((x), (min)))
 
 #ifdef PROTOCOL_DEBUG_ON
 #define LOG_DEBUG(...) log_debug(__VA_ARGS__)
@@ -105,23 +131,33 @@ uint8_t fp_get_status_code(const uint8_t *recv_buf) {
 }
 
 /* build a command pack from `code` + `data` and write it to the device */
-static int fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
-                       size_t data_len) {
+static enum fp_status fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
+                                  size_t data_len) {
   uint8_t buf[SEND_BUF_SIZE];
-  size_t n = fp_fill_pack(buf, FP_CMD_PACK, code, data, data_len);
+  size_t n = fp_fill_pack(buf, 1U, code, data, data_len);
   if (n == 0) {
     log_error("failed to build command pack (code=%02X)!", code);
-    return -1;
+    return FP_FAIL;
   }
 
   dump("send: ", buf, n);
-  ssize_t bw = write(fd, buf, n);
-  if (bw < 0) {
-    log_error("write negative bytes!");
-    return -1;
+  size_t off = 0;
+  while (off < n) {
+    ssize_t bw = write(fd, buf + off, n - off);
+    if (bw < 0) {
+      if (errno == EINTR)
+        continue;
+      log_error("write failed: %s", strerror(errno));
+      return FP_ERR_IO;
+    }
+    if (bw == 0) {
+      log_error("write returned 0");
+      return FP_ERR_IO;
+    }
+    off += (size_t)bw;
   }
-  LOG_DEBUG("write %d bytes", bw);
-  return bw;
+  LOG_DEBUG("write %zu bytes", n);
+  return FP_OK;
 }
 
 static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
@@ -138,30 +174,42 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
   while (got < want) {
     int ready = poll(&pfd, 1, timeout * 1000);
     if (ready < 0) {
-      if (errno == EINTR) // can retry
+      if (errno == EINTR)
         continue;
-      log_error("read poll request failed!");
-      return -1;
+      log_error("poll failed: %s", strerror(errno));
+      return FP_ERR_IO;
     }
     if (ready == 0) {
       log_warn("recv timeout, got %zu/%zu bytes", got, want);
-      return -1;
+      return FP_ERR_TIMEOUT;
+    }
+    /* POLLHUP/POLLERR shows up when the tty is torn down (device unplugged) */
+    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+      log_error("device hangup/error (revents=0x%x)", (unsigned)pfd.revents);
+      return FP_ERR_IO;
     }
 
     ssize_t br = read(fd, buf + got, want - got);
-    if (br <= 0) {
-      log_error("read failed!");
-      return -1;
+    if (br < 0) {
+      if (errno == EINTR)
+        continue;
+      log_error("read failed: %s", strerror(errno));
+      return FP_ERR_IO;
+    }
+    if (br == 0) {
+      log_error("read EOF (device gone?)");
+      return FP_ERR_IO;
     }
     got += (size_t)br;
 
-    if (want == FP_PACKHEADER_SIZE) {
+    /* only trust the length field once the whole header has arrived */
+    if (want == FP_PACKHEADER_SIZE && got >= FP_PACKHEADER_SIZE) {
       uint16_t pack_len =
           ((uint16_t)buf[FP_OFF_PACKLEN] << 8) | buf[FP_OFF_PACKLEN + 1];
       want = FP_PACKHEADER_SIZE + pack_len;
       if (want > len) {
         log_error("frame too large: %zu > %zu", want, len);
-        return -1;
+        return FP_ERR_PROTO;
       }
     }
   }
@@ -169,25 +217,28 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
   return (int)got;
 }
 
-/* public api to build fp_cmd, returns numbers of bytes read when success
-    -1 when failed, it will set status_code of the slave */
-static int fp_transact(int fd, uint8_t code, const uint8_t *send,
-                       size_t send_len, uint8_t *recv, size_t recv_len,
-                       float timeout, uint8_t *dev_status) {
-  if (fp_send_cmd(fd, code, send, send_len) < 0) {
-    log_error("Send Failed");
-    return -1;
+/* run one command/response transaction. On success sets *dev_status to the
+ * device confirm code and returns FP_OK; on local failure returns a negative
+ * enum fp_status. */
+static enum fp_status fp_transact(int fd, uint8_t code, const uint8_t *send,
+                                  size_t send_len, uint8_t *recv,
+                                  size_t recv_len, float timeout,
+                                  uint8_t *dev_status) {
+  enum fp_status st = fp_send_cmd(fd, code, send, send_len);
+  if (st != FP_OK) {
+    log_error("send failed");
+    return st;
   }
 
   int nbr = fp_recv_pack(fd, recv, recv_len, timeout);
-  if (nbr == -1) {
-    log_error("Recv Failed");
-    return -1;
+  if (nbr < 0) {
+    log_error("recv failed (ret: %d)", nbr);
+    return (enum fp_status)nbr;
   }
 
   *dev_status = fp_get_status_code(recv);
   LOG_DEBUG("nbr: %d, p_recv->code: 0x%02x", nbr, *dev_status);
-  return (int)nbr;
+  return FP_OK;
 }
 
 /* return fd when successfully opened, -1 if not */
@@ -204,10 +255,10 @@ int fp_open(const char *devname, unsigned int baudrate) {
            devname);
 
   fcntl(fd, F_SETFL, 0);
-  /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
-     length is handled by fp_recv_pack instead of the tty layer */
-  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON,
-                      1, 0) != 0) {
+  /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
+     is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
+  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0) !=
+      0) {
     log_error("failed to configure the serial port!");
     close(fd);
     return -1;
@@ -215,50 +266,51 @@ int fp_open(const char *devname, unsigned int baudrate) {
   return fd;
 }
 
-uint8_t fp_read_sys_para(int fd) {
+enum fp_status fp_read_sys_para(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                        &status_code);
+  enum fp_status ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("read sys para failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("read sys para failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_check_sensor_state(int fd) {
+enum fp_status fp_check_sensor_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                        &status_code);
+  enum fp_status ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("check sensor failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("check sensor failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
-                       bool return_status, bool allow_overwrite,
-                       bool allow_duplicate, bool require_remove) {
+enum fp_status fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times,
+                              bool led_ctrl, bool return_status,
+                              bool allow_overwrite, bool allow_duplicate,
+                              bool require_remove) {
   // TODO: max id limit if (id >)
   /* theoretically enrolling time can be larger than 5(max to 255),
      but better not */
   if (enroll_times <= 1 || enroll_times > 5) {
     log_error("enroll time not in range (1, 5] (current time: %u)",
               enroll_times);
-    return 0xFF;
+    return FP_FAIL;
   }
   log_info("----------------------------------------------------");
   /* bit1, 6~15 is reserved */
@@ -271,11 +323,9 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = 0;
-
-  ret = fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15,
-                    &status_code);
-  if (ret < 0) {
+  enum fp_status ret = fp_transact(fd, 0x31, send, LEN(send), buf,
+                                   RECV_BUF_SIZE, 15, &status_code);
+  if (ret != FP_OK) {
     log_error("auto enroll failed(transact ret: %d)", ret);
     goto end;
   }
@@ -301,11 +351,13 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
 
 end:
   log_info("----------------------------------------------------");
-  return status_code == 0x00 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (ret != FP_OK)
+    return ret;
+  return status_code == 0x00 ? FP_OK : FP_FAIL;
 }
 
-uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                         bool led_ctrl, bool return_status) {
+enum fp_status fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
+                                bool led_ctrl, bool return_status) {
   log_info("====================================================");
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
@@ -316,12 +368,11 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   uint8_t send[] = {score_level, id >> 8, id & 0xFF, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = 0;
 
   /* 模块的 timeout 大概在 11s 左右 */
-  ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
-                    &status_code);
-  if (ret < 0) {
+  enum fp_status ret = fp_transact(fd, 0x32, send, LEN(send), buf,
+                                   RECV_BUF_SIZE, 15, &status_code);
+  if (ret != FP_OK) {
     log_error("auto identify failed(transact ret: %d)", ret);
     goto end;
   }
@@ -342,95 +393,100 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
 
 end:
   log_info("====================================================");
-  return status_code == 0x00 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (ret != FP_OK)
+    return ret;
+  return status_code == 0x00 ? FP_OK : FP_FAIL;
 }
 
 /* control light band of the module */
-uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
-                         uint8_t end_color, uint8_t cycles, uint8_t period) {
+enum fp_status fp_control_light(int fd, enum fp_light_mode mode,
+                                uint8_t start_color, uint8_t end_color,
+                                uint8_t cycles, uint8_t period) {
   /* 功能码, 起始颜色, 结束颜色/占空比, 循环次数, 时间 */
   uint8_t send[] = {(uint8_t)mode, start_color, end_color, cycles, period};
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
-                        DEFAULT_TIMEOUT, &status_code);
+  enum fp_status ret =
+      fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
+                  DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("control light failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("control light failed(status code: 0x%02X)!", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_cancel(int fd) {
+enum fp_status fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                        &status_code);
+  enum fp_status ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("cancel failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("cancel failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_sleep(int fd) {
+enum fp_status fp_sleep(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                        &status_code);
+  enum fp_status ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("sleep failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("sleep failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
+enum fp_status fp_delete_char(int fd, uint16_t id, uint16_t n) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
-  int ret = fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
-                        DEFAULT_TIMEOUT, &status_code);
+  enum fp_status ret =
+      fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
+                  DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("delete char/template failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("delete char/template failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
 
-uint8_t fp_empty(int fd) {
+enum fp_status fp_empty(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
-  int ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                        &status_code);
+  enum fp_status ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
 
-  if (ret < 0) {
+  if (ret != FP_OK) {
     log_error("empty char/template failed(transact ret: %d)", ret);
-    return EXIT_FAILURE;
+    return ret;
   }
   if (status_code != 0x00) {
     log_error("empty char/template failed(status code: 0x%02X)", status_code);
-    return EXIT_FAILURE;
+    return FP_FAIL;
   }
-  return EXIT_SUCCESS;
+  return FP_OK;
 }
