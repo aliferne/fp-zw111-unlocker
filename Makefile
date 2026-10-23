@@ -19,9 +19,9 @@ OBJS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(APP_SRCS))
 TARGET := $(BUILD_DIR)/fingerprint
 PAM_TARGET := $(BUILD_DIR)/pam_fprint_zw111.so
 
-CFLAGS := -Wall -Wextra -O2 -g -std=c99
+CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
-# LIBFLAGS :=
+# LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
 DEFFLAGS += -DLOG_USE_COLOR \
 	-DSERIAL_DEBUG_ON \

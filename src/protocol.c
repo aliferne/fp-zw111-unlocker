@@ -172,7 +172,6 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
 /* public api to build fp_cmd, returns numbers of bytes read when success
     -1 when failed, it will set status_code of the slave */
 static int fp_transact(int fd, uint8_t code, const uint8_t *send,
-
                        size_t send_len, uint8_t *recv, size_t recv_len,
                        float timeout, uint8_t *dev_status) {
   if (fp_send_cmd(fd, code, send, send_len) < 0) {
@@ -207,8 +206,8 @@ int fp_open(const char *devname, unsigned int baudrate) {
   fcntl(fd, F_SETFL, 0);
   /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
      length is handled by fp_recv_pack instead of the tty layer */
-  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0) !=
-      0) {
+  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON,
+                      1, 0) != 0) {
     log_error("failed to configure the serial port!");
     close(fd);
     return -1;
@@ -319,6 +318,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   uint8_t status_code = 0xFF;
   int ret = 0;
 
+  /* 模块的 timeout 大概在 11s 左右 */
   ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
                     &status_code);
   if (ret < 0) {

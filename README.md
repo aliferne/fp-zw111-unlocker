@@ -18,6 +18,7 @@ Blogs:
 - [Archwiki fprint]: https://wiki.archlinuxcn.org/wiki/Fprint
 - [Archwiki SDDM ch2.10]: https://wiki.archlinuxcn.org/wiki/SDDM#使用指纹识别器
 - [Linux 固定 USB 串口设备名称]: https://zhuanlan.zhihu.com/p/544993864
+- [Understanding VMIN & VTIME]: http://unixwiz.net/techtips/termios-vmin-vtime.html
 
 Opensource Projects:
 
@@ -25,6 +26,6 @@ Opensource Projects:
 
 Books:
 
-- 《Linux 系统编程》 Chapter 1, 2
-- 《Linux/Unix 系统编程手册》 附录 B —— 解析命令行选项
+- 《Linux 系统编程》 Chapter 1, 2, 11
+- 《Linux/Unix 系统编程手册》 Chapter 23, 附录 B —— 解析命令行选项
 - 《嵌入式 Linux 开发教程》（上） Chapter 16
