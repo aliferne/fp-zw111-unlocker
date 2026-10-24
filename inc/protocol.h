@@ -8,19 +8,27 @@
 #define FP_PACK_START (0xEF01)
 #define FP_DEV_ADDR (0xFFFFFFFF)
 
+// TODO: 这里 API 还没定，有些地方实在不知道要怎么写，再想想是直接返回
+// status_code 还是使用 fp_status
+
+// #define IS_DEV_TIMEOUT(status_code) ((status_code) == )
+// #define IS_FINGER_ERROR(status_code) ((status_code) == )
+
 /* command results:
  *   FP_OK           success (device confirm code 0x00)
  *   FP_ERR_IO       transport/IO error, e.g. the device was unplugged
  *   FP_ERR_TIMEOUT  no response from the device within the timeout
  *   FP_ERR_PROTO    malformed response (bad length/...)
  *   FP_FAIL         generic failure (device confirm code != 0x00, bad args...)
- * Failure details are written to the log. */
+ *   FP_ERR_FINGER   can not generate finger features or finger not matched
+ * (status_code == 0x09) Failure details are written to the log. */
 enum fp_status {
   FP_ERR_PROTO = -3,
   FP_ERR_TIMEOUT = -2,
   FP_ERR_IO = -1,
   FP_OK = 0,
   FP_FAIL = 1,
+  FP_ERR_FINGER = 2,
 };
 
 /* sum of the bytes that the checksum covers, takes the frame size as `len` */
@@ -33,7 +41,11 @@ uint8_t fp_get_status_code(const uint8_t *recv_buf);
  * enum fp_status on failure. */
 enum fp_status fp_read_sys_para(int fd);
 
+enum fp_status fp_check_module_state(int fd);
+
 enum fp_status fp_check_sensor_state(int fd);
+
+enum fp_status fp_reset_settings(int fd);
 
 /* cancel auto enroll & auto identify */
 enum fp_status fp_cancel(int fd);
@@ -141,5 +153,8 @@ enum fp_status fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times,
  */
 enum fp_status fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
                                 bool led_ctrl, bool return_status);
+
+// translate fp_status into strings
+const char *fp_strstatus(enum fp_status s);
 
 #endif

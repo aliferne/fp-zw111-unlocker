@@ -21,6 +21,7 @@
 
 1. ZW111 模块已经使用 udev 规则改名为： /dev/FP_ZW111
 2. 安装了 `pamtester`，可以借助 `sudo pamtester -v kde-fingerprint $USER authenticate` 并要求人进行测试并给出反馈来测试 PAM 模块代码问题
+3. 单独测试锁屏的话可以通过：`/lib/x86_64-linux-gnu/libexec/kscreenlocker_greet` 来测试
 
 # 项目规约
 

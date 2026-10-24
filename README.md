@@ -27,5 +27,5 @@ Opensource Projects:
 Books:
 
 - 《Linux 系统编程》 Chapter 1, 2, 11
-- 《Linux/Unix 系统编程手册》 Chapter 23, 附录 B —— 解析命令行选项
+- 《Linux/Unix 系统编程手册》 Chapter 23, 55, 附录 B —— 解析命令行选项
 - 《嵌入式 Linux 开发教程》（上） Chapter 16

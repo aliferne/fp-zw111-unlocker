@@ -267,6 +267,10 @@ pamtester: successfully authenticated
 创建定时器
 注意 `clock_gettime` 需要 gnu99，即需要定义 POSIX 标准，不能是 STRICT_ANSI 模式
 
+`/lib/x86_64-linux-gnu/libexec/kscreenlocker_greet --testing`
+
+稍稍改了一下之前 AI 生成的 cli.c，有很多功能没完善，但是雏形有了，已经很方便了
+
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 
 1. https://zhuanlan.zhihu.com/p/663757925

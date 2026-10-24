@@ -7,6 +7,7 @@ BUILD_DIR := build
 # 入口与 PAM 模块源文件
 MAIN_SRC := $(SRC_DIR)/main.c
 PAM_SRC := $(SRC_DIR)/pam_fprint_zw111.c
+CLI_SRCS := $(SRC_DIR)/cli.c
 HEADERS := $(wildcard $(INC_DIR)/*.h)
 
 # 公共核心源码（协议、串口、日志等，主程序与 PAM 模块共用）
@@ -18,13 +19,14 @@ APP_SRCS := $(CORE_SRCS) $(MAIN_SRC)
 OBJS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(APP_SRCS))
 TARGET := $(BUILD_DIR)/fingerprint
 PAM_TARGET := $(BUILD_DIR)/pam_fprint_zw111.so
+CLI_TARGET := $(BUILD_DIR)/cli
 
 CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
-DEFFLAGS += -DLOG_USE_COLOR \
-	-DPROTOCOL_USE_LOG
+DEFFLAGS += -DLOG_USE_COLOR
+	# -DPROTOCOL_USE_LOG
 	# -DSERIAL_DEBUG_ON
 
 .PHONY: all run pam clean
@@ -37,6 +39,8 @@ run: all
 
 pam: $(PAM_TARGET)
 
+cli: $(CLI_TARGET)
+
 # 清理目标文件和可执行文件
 clean:
 	rm -rf $(BUILD_DIR)
@@ -45,10 +49,14 @@ clean:
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-# 生成 PAM 共享库（不含 main.c，复用其依赖的核心源码）
+# 生成 PAM 共享库
 $(PAM_TARGET): $(PAM_SRC) $(CORE_SRCS) $(HEADERS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(PAM_CFLAGS) $(INCFLAGS) $(DEFFLAGS) $(PAM_SRC) $(CORE_SRCS) -o $@
+	
+$(CLI_TARGET): $(CLI_SRC) $(CORE_SRCS) $(HEADERS)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $(CLI_SRC) $(CORE_SRCS) -o $@
 
 # 生成目标文件
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(HEADERS)

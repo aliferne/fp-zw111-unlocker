@@ -162,7 +162,9 @@ static enum fp_status fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
   return FP_OK;
 }
 
-static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
+/* nbr: number of bytes read */
+static enum fp_status fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
+                                   float timeout) {
   size_t got = 0;
   size_t want = FP_PACKHEADER_SIZE;
   struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLPRI};
@@ -215,8 +217,10 @@ static int fp_recv_pack(int fd, uint8_t *buf, size_t len, float timeout) {
       }
     }
   }
+  *nbr = got;
   dump("recv: ", buf, got);
-  return (int)got;
+
+  return FP_OK;
 }
 
 /* run one command/response transaction. On success sets *dev_status to the
@@ -226,16 +230,17 @@ static enum fp_status fp_transact(int fd, uint8_t code, const uint8_t *send,
                                   size_t send_len, uint8_t *recv,
                                   size_t recv_len, float timeout,
                                   uint8_t *dev_status) {
+  int nbr = 0;
   enum fp_status st = fp_send_cmd(fd, code, send, send_len);
   if (st != FP_OK) {
     log_error("send failed");
     return st;
   }
 
-  int nbr = fp_recv_pack(fd, recv, recv_len, timeout);
-  if (nbr < 0) {
-    log_error("recv failed (ret: %d)", nbr);
-    return (enum fp_status)nbr;
+  st = fp_recv_pack(fd, recv, recv_len, &nbr, timeout);
+  if (st != FP_OK) {
+    log_error("recv failed");
+    return st;
   }
 
   *dev_status = fp_get_status_code(recv);
@@ -285,10 +290,27 @@ enum fp_status fp_read_sys_para(int fd) {
   return FP_OK;
 }
 
-enum fp_status fp_check_sensor_state(int fd) {
+enum fp_status fp_check_module_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t status_code = 0xFF;
   enum fp_status ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
+
+  if (ret != FP_OK) {
+    log_error("check module failed(transact ret: %d)", ret);
+    return ret;
+  }
+  if (status_code != 0x00) {
+    log_error("check module failed(status code: 0x%02X)", status_code);
+    return FP_FAIL;
+  }
+  return FP_OK;
+}
+
+enum fp_status fp_check_sensor_state(int fd) {
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+  uint8_t status_code = 0xFF;
+  enum fp_status ret = fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE,
                                    DEFAULT_TIMEOUT, &status_code);
 
   if (ret != FP_OK) {
@@ -297,6 +319,23 @@ enum fp_status fp_check_sensor_state(int fd) {
   }
   if (status_code != 0x00) {
     log_error("check sensor failed(status code: 0x%02X)", status_code);
+    return FP_FAIL;
+  }
+  return FP_OK;
+}
+
+enum fp_status fp_reset_settings(int fd) {
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+  uint8_t status_code = 0xFF;
+  enum fp_status ret = fp_transact(fd, 0x3B, NULL, 0, buf, RECV_BUF_SIZE,
+                                   DEFAULT_TIMEOUT, &status_code);
+
+  if (ret != FP_OK) {
+    log_error("reset settings failed(transact ret: %d)", ret);
+    return ret;
+  }
+  if (status_code != 0x00) {
+    log_error("reset settings failed(status code: 0x%02X)", status_code);
     return FP_FAIL;
   }
   return FP_OK;
@@ -400,6 +439,8 @@ end:
 
   if (status_code == 0x26) // 超时和其他错误是不太一样的
     return FP_ERR_TIMEOUT;
+  else if (status_code == 0x09)
+    return FP_ERR_FINGER;
 
   return status_code == 0x00 ? FP_OK : FP_FAIL;
 }
@@ -495,4 +536,20 @@ enum fp_status fp_empty(int fd) {
     return FP_FAIL;
   }
   return FP_OK;
+}
+
+const char *fp_strstatus(enum fp_status s) {
+  switch (s) {
+  case FP_OK:
+    return "Success";
+  case FP_ERR_IO:
+    return "I/O Error";
+  case FP_ERR_TIMEOUT:
+    return "Timeout";
+  case FP_ERR_PROTO:
+    return "Invalid Proto";
+  case FP_FAIL:
+  default:
+    return "Failed";
+  }
 }
