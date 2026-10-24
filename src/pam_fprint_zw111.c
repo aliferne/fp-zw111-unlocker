@@ -1,6 +1,3 @@
-#include <bits/time.h>
-#include <security/_pam_types.h>
-#include <stdio.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
@@ -8,7 +5,6 @@
 #include "protocol.h"
 #include "serial.h"
 #include <fcntl.h>
-#include <security/pam_appl.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdbool.h>
@@ -40,23 +36,16 @@ static bool is_time_reached(const struct timespec *start, double timeout) {
   return timeout - time_diff <= 1E-3;
 }
 
-/* return -1 if failed, otherwise fd */
+/* return fd, never fail but stuck at the loop when fd == -1 */
 static int pam_open_fp() {
   int fd;
-  struct timespec start;
 
-  if (GET_TIME(&start) != 0) {
-    log_error("can not get current time!");
-    return -1;
-  }
-
+  log_info("now openning device: %s...", FINGER_MOD);
   while ((fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE)) == -1) {
     sleep(1);
-    if (is_time_reached(&start, MAX_TIMEOUT)) {
-      log_error("can not open device, max timeout exceeded!");
-      return -1;
-    }
   }
+
+  log_info("device opened!");
   return fd;
 }
 
@@ -76,69 +65,45 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   LOG_INFO("pam_sm_authenticate called");
 
-  log_info("now openning device %s...", FINGER_MOD);
-  struct timespec start;
   enum fp_status stat;
   int pam_code = PAM_SUCCESS;
   int fd = pam_open_fp();
 
-  if (fd == -1) {
-    return PAM_AUTHINFO_UNAVAIL;
-  }
-
-  log_info("device %s opened, "
-           "now configuring terminal parameters...",
-           FINGER_MOD);
-
-  fcntl(fd, F_SETFL, 0);
-  /* VMIN=1, VTIME=0: read returns as soon as data is available, the frame
-     length is handled by fp_recv_pack instead of the tty layer */
-  if (serial_set_attr(fd, DEFAULT_BAUDRATE, DATABIT_8, STOPBIT_1, PARITY_NON, 0,
-                      0) != 0) {
-    log_error("failed to configure the serial port!");
-    goto err_auth;
-  }
-
   int retries = 0;
-  if (GET_TIME(&start) != 0) {
-    log_error("can not get current time!");
-    goto err_unaval;
-  }
-
   while ((stat = fp_auto_identify(fd, 2, 0xFFFF, true, true)) != FP_OK) {
     sleep(1); // wait for next retry
 
-    if (stat == FP_ERR_IO) {
+    if (stat == FP_ERR_TIMEOUT) {
+      continue;
+    }
+    else if (stat == FP_ERR_IO) {
       fp_close(fd);
       fd = pam_open_fp();
       if (fd == -1) {
-        goto err_unaval;
+        pam_code = PAM_AUTHINFO_UNAVAIL;
+        goto out;
       }
-    } else {
-      // 这里应该根据次数来记录 => MAX_RETRY
-      if (++retries >= MAX_RETRY) {
-        log_error("identify failed, max retry exceeded!");
-        goto err_auth;
-      }
-      log_warn("you still have %d chance(s) to identify", MAX_RETRY - retries);
     }
+
+    // 这里应该根据次数来记录 => MAX_RETRY
+    if (++retries >= MAX_RETRY) {
+      log_error("identify failed, max retry exceeded!");
+      pam_code = PAM_AUTH_ERR;
+      goto out;
+    }
+    log_warn("you still have %d chance(s) to identify", MAX_RETRY - retries);
   }
 
-  goto done;
+  log_info("identified!");
+  pam_code = PAM_SUCCESS;
 
-err_auth:
-  pam_code = PAM_AUTH_ERR;
-  goto done;
-err_unaval:
-  pam_code = PAM_AUTHINFO_UNAVAIL;
-  goto done;
-
-done:
+out:
   if (fd != -1)
     fp_close(fd);
   return pam_code;
 }
 
+// 这个函数会被 kwin_wayland_wrapper 调用，大概率是有用的
 PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
                               const char **argv) {
   LOG_INFO("pam_sm_setcred called");

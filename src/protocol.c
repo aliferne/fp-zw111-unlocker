@@ -1,5 +1,4 @@
 #include "protocol.h"
-#include "log.h"
 #include "serial.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -45,9 +44,8 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define CLAMP(x, min, max) MIN((max), MAX((x), (min)))
 
-#ifdef PROTOCOL_DEBUG_ON
-#define LOG_DEBUG(...) log_debug(__VA_ARGS__)
-
+#ifdef PROTOCOL_USE_LOG
+#include "log.h"
 static void dump(const char *name, const uint8_t *b, size_t n) {
   printf("%-14s", name);
   for (size_t i = 0; i < n; i++)
@@ -55,8 +53,12 @@ static void dump(const char *name, const uint8_t *b, size_t n) {
   printf("\n");
   fflush(stdout);
 }
+
 #else
-#define LOG_DEBUG(...)
+#define log_info(...)
+#define log_debug(...)
+#define log_warn(...)
+#define log_error(...)
 static void dump(const char *name, const uint8_t *b, size_t n) {
   (void)name;
   (void)b;
@@ -117,7 +119,7 @@ static size_t fp_fill_pack(uint8_t *buf, uint8_t pack_id, uint8_t code,
   buf[total_len - FP_CHECKSUM_SIZE] = (checksum >> 8) & 0xFF;
   buf[total_len - 1] = checksum & 0xFF;
 
-  LOG_DEBUG("fill pack: id=%u code=%02X data_len=%zu total_len=%zu "
+  log_debug("fill pack: id=%u code=%02X data_len=%zu total_len=%zu "
             "checksum=%04X",
             pack_id, code, data_len, total_len, checksum);
   return total_len;
@@ -156,7 +158,7 @@ static enum fp_status fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
     }
     off += (size_t)bw;
   }
-  LOG_DEBUG("write %zu bytes", n);
+  log_debug("write %zu bytes", n);
   return FP_OK;
 }
 
@@ -237,7 +239,7 @@ static enum fp_status fp_transact(int fd, uint8_t code, const uint8_t *send,
   }
 
   *dev_status = fp_get_status_code(recv);
-  LOG_DEBUG("nbr: %d, p_recv->code: 0x%02x", nbr, *dev_status);
+  log_debug("nbr: %d, p_recv->code: 0x%02x", nbr, *dev_status);
   return FP_OK;
 }
 
@@ -395,6 +397,10 @@ end:
   log_info("====================================================");
   if (ret != FP_OK)
     return ret;
+
+  if (status_code == 0x26) // 超时和其他错误是不太一样的
+    return FP_ERR_TIMEOUT;
+
   return status_code == 0x00 ? FP_OK : FP_FAIL;
 }
 

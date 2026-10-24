@@ -62,7 +62,7 @@ int serial_set_attr(int fd, unsigned int baudrate, enum databit db,
   // termios.h & serial.h to get the full message
   SERIAL_LOG("request from fd: %d, "
              "set baudrate: %u, databit: %d, stopbit: %d, "
-             "parity: %d, vtime: %d, vmin: %d\n",
+             "parity: %d, vtime: %d, vmin: %d",
              fd, baudrate, db, sb, p, vtime, vmin);
 
   serial_set_baudrate(&opt, baudrate);
