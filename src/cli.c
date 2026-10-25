@@ -184,9 +184,10 @@ int main(int argc, char **argv) {
       color = (uint8_t)strtoul(optarg, NULL, 0);
       break;
     case 'h':
-    default:
       usage(argv[0]);
-      return 2;
+      return 0;
+    default:
+      break;
     }
   }
 

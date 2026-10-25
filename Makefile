@@ -25,18 +25,21 @@ CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
-DEFFLAGS += -DLOG_USE_COLOR
-	# -DPROTOCOL_USE_LOG
+DEFFLAGS += -DLOG_USE_COLOR \
+	 -DPROTOCOL_USE_LOG
 	# -DSERIAL_DEBUG_ON
 
 .PHONY: all run pam clean
 
-# 默认目标：主程序 + PAM 模块
-all: $(TARGET) $(PAM_TARGET)
+all: $(MAIN_TARGET) $(PAM_TARGET) $(CLI_TARGET)
 
-run: all
-	@./$(TARGET)
+run_main: $(MAIN_TARGET)
+	@./$(MAIN_TARGET)
 
+ARGS := -h
+run_cli: $(CLI_TARGET)
+	@./$(CLI_TARGET) $(ARGS)
+	
 pam: $(PAM_TARGET)
 
 cli: $(CLI_TARGET)
@@ -45,20 +48,23 @@ cli: $(CLI_TARGET)
 clean:
 	rm -rf $(BUILD_DIR)
 
-# 生成可执行文件（不含 pam_fprint_zw111.c）
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+$(MAIN_TARGET): $(APP_SRCS) 
+	@echo "===================== building main target ====================="
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $^ -o $@
 
 # 生成 PAM 共享库
-$(PAM_TARGET): $(PAM_SRC) $(CORE_SRCS) $(HEADERS)
+$(PAM_TARGET): $(PAM_SRC) $(CORE_SRCS)
+	@echo "===================== building pam target ====================="
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(PAM_CFLAGS) $(INCFLAGS) $(DEFFLAGS) $(PAM_SRC) $(CORE_SRCS) -o $@
-	
-$(CLI_TARGET): $(CLI_SRC) $(CORE_SRCS) $(HEADERS)
+	$(CC) $(PAM_CFLAGS) $(INCFLAGS) $(DEFFLAGS) $^ -o $@
+
+$(CLI_TARGET): $(CLI_SRC) $(CORE_SRCS)
+	@echo "===================== building cli target ====================="
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $(CLI_SRC) $(CORE_SRCS) -o $@
+	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $^ -o $@
 
 # 生成目标文件
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(HEADERS)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) -c $^ -o $@

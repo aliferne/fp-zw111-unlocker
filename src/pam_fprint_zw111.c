@@ -1,10 +1,11 @@
-#include <math.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
 #include "log.h"
 #include "protocol.h"
+#include <math.h>
 #include "serial.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
@@ -17,7 +18,7 @@
 #define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
 #define MAX_TIMEOUT (10.0f)
-#define MAX_RETRY (3)
+#define MAX_RETRY (5)
 
 #define GET_TIME(ts) clock_gettime(CLOCK_MONOTONIC, (ts))
 
@@ -25,12 +26,25 @@
 static bool is_time_reached(const struct timespec *start, double timeout) {
   struct timespec now;
   if (GET_TIME(&now) != 0) {
-    return true; // 如果无法拿到时间就永不等待
+    return false;
   }
 
   double time_diff = (double)(now.tv_sec - start->tv_sec) +
                      (double)(now.tv_nsec - start->tv_nsec) / 1E9;
   return timeout - time_diff <= 1E-3;
+}
+
+static void delay_ms(unsigned int ms) {
+  struct timespec req, rem;
+  req.tv_sec = ms / 1000;
+  req.tv_nsec = (ms % 1000) * 1E6;
+
+  while (nanosleep(&req, &rem) == -1) {
+    if (errno == EINTR)
+      req = rem;
+    else
+      break;
+  }
 }
 
 /* return fd or -1 if failed */
@@ -85,10 +99,10 @@ static int pam_open_fp() {
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                                    const char **argv) {
-  log_info("pam_sm_authenticate called");
+  log_info("pam_sm_authenticate called with flags: %02X, argc: %d", flags,
+           argc);
 
   enum fp_status status;
-  int pam_code;
   int fd = pam_open_fp();
   if (fd == -1)
     goto err_io;
@@ -97,9 +111,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   log_info("please place your finger on the module");
 
   while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false)) != FP_OK) {
-    // sleep
-    // 似乎不算是什么好主意？总而言之不能睡太长时间，不然卡顿感是比较明显的
-    sleep(1); // wait for next retry
+    delay_ms(500);
 
     if (status == FP_ERR_TIMEOUT) {
       log_warn("module identify timeout, retrying...");
@@ -119,6 +131,8 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       // it'll show a QtWidget with the text
       pam_error(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
       log_warn("you still have %d chance(s) to identify.", MAX_RETRY - retry);
+      // 避免过快重新开始循环导致浪费一次识别机会
+      delay_ms(500); 
     }
   }
 
@@ -132,27 +146,22 @@ err_io:
 
 err_max_retry:
   log_error("identify failed, max retry exceeded!");
-  pam_code = PAM_AUTH_ERR;
-
-out:
-  fp_cancel(fd);
-  return pam_code;
+  fp_close(fd);
+  return PAM_AUTH_ERR;
 }
 
 // 这个函数会被 kwin_wayland_wrapper 调用，大概率是有用的
 PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
                               const char **argv) {
-
   // flags 返回 0x10 => PAM_REFRESH_CRED
-  log_info("pam_sm_setcred called with code: %02X", flags);
+  log_info("pam_sm_setcred called with flags: %02X, argc: %d", flags, argc);
 
   return PAM_IGNORE;
 }
 
 PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
                                 const char **argv) {
-
-  log_info("pam_sm_acct_mgmt called with code: %02X", flags);
+  log_info("pam_sm_acct_mgmt called with flags: %02X, argc: %d", flags, argc);
 
   return PAM_IGNORE;
 }
