@@ -22,6 +22,7 @@
 1. ZW111 模块已经使用 udev 规则改名为： /dev/FP_ZW111
 2. 安装了 `pamtester`，可以借助 `sudo pamtester -v kde-fingerprint $USER authenticate` 并要求人进行测试并给出反馈来测试 PAM 模块代码问题
 3. 单独测试锁屏的话可以通过：`/lib/x86_64-linux-gnu/libexec/kscreenlocker_greet` 来测试
+4. 手册中 `0x17` 状态码指的是：表示残留指纹或两次采集之间手指没有移动过。 这句话不是说指纹验证 `auto_identify` 的时候手指没及时移开，不要望文生义，事实上手指不及时移开就会一直返回 `0x09`
 
 # 项目规约
 

@@ -257,6 +257,13 @@ int fp_open(const char *devname, unsigned int baudrate) {
     log_error("can not open device %s!", devname);
     return -1;
   }
+
+  if (isatty(fd) == 0) {
+    log_error("the device %s is not a tty, we can not set serial for it!",
+              devname);
+    return -1;
+  }
+
   log_info("device %s opened, "
            "now configuring terminal parameters...",
            devname);
@@ -264,9 +271,12 @@ int fp_open(const char *devname, unsigned int baudrate) {
   fcntl(fd, F_SETFL, 0);
   /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
      is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
-  if (serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0) !=
-      0) {
-    log_error("failed to configure the serial port!");
+  int ret =
+      serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0);
+  if (ret != 0) {
+    log_error("failed to configure the serial port!"
+              "(ret: %d, errno: %d)",
+              ret, errno);
     close(fd);
     return -1;
   }
@@ -543,6 +553,8 @@ const char *fp_strstatus(enum fp_status s) {
     return "Timeout";
   case FP_ERR_PROTO:
     return "Invalid Proto";
+  case FP_ERR_FINGER:
+    return "Invalid Finger";
   case FP_FAIL:
   default:
     return "Failed";

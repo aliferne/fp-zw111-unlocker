@@ -1,4 +1,5 @@
 #include "serial.h"
+#include <termios.h>
 
 #ifdef SERIAL_DEBUG_ON
 #include "log.h"
