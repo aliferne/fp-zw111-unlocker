@@ -22,3 +22,10 @@ compile_commands.json
 *.d
 *.o
 *.out
+
+# KDE Plasma related
+/org.kde.plasma.desktop/metadata.json
+/org.kde.plasma.desktop/contents/*
+/org.kde.plasma.desktop/contents/lockscreen/*
+!/org.kde.plasma.desktop/contents/lockscreen
+!/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml

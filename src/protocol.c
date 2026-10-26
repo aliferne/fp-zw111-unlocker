@@ -418,6 +418,7 @@ enum fp_status fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
     goto end;
   }
 
+  ret = status_code == 0x00 ? FP_OK : FP_FAIL;
   if (status_code == 0x00) {
     log_info("identified!");
   } else if (status_code == 0x24) {
@@ -428,21 +429,15 @@ enum fp_status fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
     log_error("template doesn't exist!");
   } else if (status_code == 0x26) {
     log_error("identify timeout!");
+    ret = FP_ERR_TIMEOUT;
   } else if (status_code == 0x09) {
     log_error("can not generate finger features or identify finger!");
+    ret = FP_ERR_FINGER;
   }
 
 end:
   log_info("====================================================");
-  if (ret != FP_OK)
-    return ret;
-
-  if (status_code == 0x26) // 超时和其他错误是不太一样的
-    return FP_ERR_TIMEOUT;
-  else if (status_code == 0x09)
-    return FP_ERR_FINGER;
-
-  return status_code == 0x00 ? FP_OK : FP_FAIL;
+  return ret;
 }
 
 /* control light band of the module */

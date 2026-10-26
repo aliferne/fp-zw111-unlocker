@@ -271,12 +271,75 @@ pamtester: successfully authenticated
 
 稍稍改了一下之前 AI 生成的 cli.c，有很多功能没完善，但是雏形有了，已经很方便了
 
+查了一下发现可以通过 `pam_error` 来让锁屏界面显示一些提示信息
+于是 `pam_error(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);`
+但是发现会卡窗口期，如果验证失败之后被弹跳动效搞了的话，就会导致提示信息显示不及时
+我们发现锁屏测试的时候指纹验证不通过的动效
+
+找到了 `/usr/share/plasma/shells/org.kde.plasma.desktop/`，里面的 QML 和锁屏界面有关，看到 lockscreen 目录，可以修改这里的进行配置，clone 了 kscreenlocker 的源码进行查看，发现使用了 PAM 的对话机制 `PamAuthenticator::converse( ... )`， `Q_EMIT` 会发送 `pam_info` 和 `pam_error` 发出去的 `msg` 给到 QML, 但是 QML 只会显示 `pam_error` 的 `msg`， 原因在于只有这个是 `onNoninteractiveError` 的，我们需要扩充一下。
+
+简单学习一下 QML， Qt 之间的机制，然后改动 QML，新增:
+
+```qml
+// File: .../lockscreen/MainBlock.qml
+component FPLabel : PlasmaComponents3.Label {
+    id: _fpLabel
+    required property int kind
+    required property string label
+
+    visible: authenticator.authenticatorTypes & kind
+    text: label
+    textFormat: Text.PlainText
+    horizontalAlignment: Text.AlignHCenter
+    Layout.fillWidth: true
+
+    Connections {
+        target: authenticator
+
+        function onNoninteractiveInfo(kind, authenticator) {
+            if (kind & _fpLabel.kind) {
+                _fpLabel.text = Qt.binding(() => authenticator.infoMessage)
+           }
+       }
+    }
+}
+
+FPLabel {
+    kind: ScreenLocker.Authenticator.Fingerprint
+    label: "(此处显示与指纹模块 ZW111 有关的信息)"
+}
+```
+
+然后可以显示 `pam_info` 给出的东西，并且完全避免我不想要的失败动效
+当然如果想要创建一个新 Label 的话，就是复制一下 `FailableLabel` 并粘贴，再删掉多余部分（Timer, 动画等），最后声明一下这个组件就行（即最后补上 `NewLabel { ... }`）。
+
+qml 之间似乎通过一些规约互相引用，需要了解一下
+这里应该只会改动 `MainBlock.qml`
+
+由于是声明式的，所以只需要把组件声明之后放在那里就行，显示顺序取决于声明顺序
+
+---
+comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情考虑是否加入博客中
+
+然后发现 label 无法汉化，
+查询 i18nd => GNU gettext & po/mo 文件
+=> `i18nd( "<filename>.mo", "<msgid>" )`
+=> `msgunfmt /usr/share/locale/zh_CN/LC_MESSAGES/plasma_shell_org.kde.plasma.desktop.mo -o ./plasmashell.po`
+=> find `Unlock`
+=> 找到对应汉化文本：解锁
+
+如果要使用 `i18nd`，那么就是把 plasmashell.po 给改一下加点内容，然后编译成 plasma_shell_org.kde.plasma.desktop.mo 并丢到 `~/.local/share/locale/zh_CN/LC_MESSAGES/` 里面就行
+如果不想做那么标准的国际化操作，直接写文字就行。
+
+---
+
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 
 1. https://zhuanlan.zhihu.com/p/663757925
 2. https://wiki.archlinux.org.cn/title/PAM
 3. [flag fPIC]: https://zhuanlan.zhihu.com/p/368364069
    同时 fPIC 选项可以参考 CSAPP 的第七章
+4. [gettext, msg(un)fmt command]: https://www.cnblogs.com/jjxhp/p/12036187.html
 
 下面这些是一手资料，质量更好：
 

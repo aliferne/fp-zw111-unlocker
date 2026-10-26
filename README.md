@@ -19,6 +19,8 @@ Blogs:
 - [Archwiki SDDM ch2.10]: https://wiki.archlinuxcn.org/wiki/SDDM#使用指纹识别器
 - [Linux 固定 USB 串口设备名称]: https://zhuanlan.zhihu.com/p/544993864
 - [Understanding VMIN & VTIME]: http://unixwiz.net/techtips/termios-vmin-vtime.html
+- [QML Tutorial]: https://doc.qt.io/qt-6/zh/qml-tutorial.html
+- [QML & C++ Intergration]: https://doc.qt.io/qt-6.8/zh/qtqml-cppintegration-exposecppattributes.html
 
 Opensource Projects:
 
