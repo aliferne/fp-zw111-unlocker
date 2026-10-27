@@ -29,3 +29,4 @@ compile_commands.json
 /org.kde.plasma.desktop/contents/lockscreen/*
 !/org.kde.plasma.desktop/contents/lockscreen
 !/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml
+
