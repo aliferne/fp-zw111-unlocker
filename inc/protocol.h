@@ -5,31 +5,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define FP_PACK_START (0xEF01)
-#define FP_DEV_ADDR (0xFFFFFFFF)
+#define FP_OK 0x00
+#define FP_FAIL 0x01
+#define FP_FINGER_NOT_MATCHED 0x09
+#define FP_TIMEOUT 0x26
 
-// TODO: 这里 API 还没定，有些地方实在不知道要怎么写，再想想是直接返回
-// status_code 还是使用 fp_status
+/*  手册中最后一个错误码以 0x40 结束，下面是自定义情况 */
 
-// #define IS_DEV_TIMEOUT(status_code) ((status_code) == )
-// #define IS_FINGER_ERROR(status_code) ((status_code) == )
+#define FP_IO_ERR 0x41
 
-/* command results:
- *   FP_OK           success (device confirm code 0x00)
- *   FP_ERR_IO       transport/IO error, e.g. the device was unplugged
- *   FP_ERR_TIMEOUT  no response from the device within the timeout
- *   FP_ERR_PROTO    malformed response (bad length/...)
- *   FP_FAIL         generic failure (device confirm code != 0x00, bad args...)
- *   FP_ERR_FINGER   can not generate finger features or finger not matched
- * (status_code == 0x09) Failure details are written to the log. */
-enum fp_status {
-  FP_ERR_PROTO = -3,
-  FP_ERR_TIMEOUT = -2,
-  FP_ERR_IO = -1,
-  FP_OK = 0,
-  FP_FAIL = 1,
-  FP_ERR_FINGER = 2,
-};
+#define __IS_STATUS(status, target) ((status) == (target))
+#define IS_FP_OK(status) __IS_STATUS(status, FP_OK)
+#define IS_FP_FAIL(status) __IS_STATUS(status, FP_FAIL)
+#define IS_FP_FINGER_NOT_MATCHED(status)                                       \
+  __IS_STATUS(status, FP_FINGER_NOT_MATCHED)
+#define IS_FP_TIMEOUT(status) __IS_STATUS(status, FP_TIMEOUT)
+#define IS_FP_FINGER_EXISTS(status) __IS_STATUS(status, 0x27)
+#define IS_FP_IO_ERR(status) __IS_STATUS(status, FP_IO_ERR)
 
 /* sum of the bytes that the checksum covers, takes the frame size as `len` */
 uint16_t fp_get_checksum(const uint8_t *buf, size_t len);
@@ -38,25 +30,25 @@ uint16_t fp_get_checksum(const uint8_t *buf, size_t len);
 uint8_t fp_get_status_code(const uint8_t *recv_buf);
 
 /* All command functions below return FP_OK on success and a non-zero
- * enum fp_status on failure. */
-enum fp_status fp_read_sys_para(int fd);
+ * uint8_t on failure. */
+uint8_t fp_read_sys_para(int fd);
 
-enum fp_status fp_check_module_state(int fd);
+uint8_t fp_check_module_state(int fd);
 
-enum fp_status fp_check_sensor_state(int fd);
+uint8_t fp_check_sensor_state(int fd);
 
-enum fp_status fp_reset_settings(int fd);
+uint8_t fp_reset_settings(int fd);
 
 /* cancel auto enroll & auto identify */
-enum fp_status fp_cancel(int fd);
+uint8_t fp_cancel(int fd);
 
-enum fp_status fp_sleep(int fd);
+uint8_t fp_sleep(int fd);
 
 /* delete N finger templates start from the specific ID number */
-enum fp_status fp_delete_char(int fd, uint16_t id, uint16_t n);
+uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n);
 
 /* delete all finger templates in the flash */
-enum fp_status fp_empty(int fd);
+uint8_t fp_empty(int fd);
 
 /* 多功能三色灯 (指令码 0x3C) */
 enum fp_light_mode {
@@ -94,9 +86,8 @@ int fp_open(const char *devname, unsigned int baudrate);
  *
  * Return 0 on success, non-zero on failure
  */
-enum fp_status fp_control_light(int fd, enum fp_light_mode mode,
-                                uint8_t start_color, uint8_t end_color,
-                                uint8_t cycles, uint8_t period);
+uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
+                         uint8_t end_color, uint8_t cycles, uint8_t period);
 
 /* auto enroll finger print, each call enrolls one finger,
  * the module shines green light when success, red blinking light when failed.
@@ -127,10 +118,9 @@ enum fp_status fp_control_light(int fd, enum fp_light_mode mode,
  *
  * Return 0 on success, non-zero on failure
  */
-enum fp_status fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times,
-                              bool led_ctrl, bool return_status,
-                              bool allow_overwrite, bool allow_duplicate,
-                              bool require_remove);
+uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
+                       bool return_status, bool allow_overwrite,
+                       bool allow_duplicate, bool require_remove);
 
 /* auto identify finger print,
  * the module shines green light when success, red blinking light when failed.
@@ -151,10 +141,10 @@ enum fp_status fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times,
  *
  * Return 0 on success, non-zero on failure
  */
-enum fp_status fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                                bool led_ctrl, bool return_status);
+uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
+                         bool led_ctrl, bool return_status);
 
-// translate fp_status into strings
-const char *fp_strstatus(enum fp_status s);
+// translate status_code into strings
+const char *fp_strcode(uint8_t c);
 
 #endif

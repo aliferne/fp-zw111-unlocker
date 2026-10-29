@@ -104,7 +104,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
            argc);
 
   int ret = PAM_SUCCESS;
-  enum fp_status status;
+  uint8_t status;
   int fd = pam_open_fp();
   // TODO: 妈的我还是希望能一直卡着，不然检测不到设备就要输入密码了
   if (fd == -1) {
@@ -121,12 +121,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     delay_ms(500);
 
     switch (status) {
-    case FP_ERR_TIMEOUT: {
+    case FP_TIMEOUT: {
       log_warn("module identify timeout, retrying...");
       continue;
     }
 
-    case FP_ERR_IO: {
+    case FP_IO_ERR: {
       pam_info(pamh, "设备已断开连接，尝试重连中...");
       log_warn("device is removed!");
 
@@ -141,7 +141,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     } break;
 
       // tried to unlock by finger not enrolled
-    case FP_ERR_FINGER: {
+    case FP_FINGER_NOT_MATCHED: {
       if (++retry >= MAX_RETRY) {
         log_error("identify failed, max retry exceeded!");
         fp_close(fd);
@@ -154,11 +154,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       // 避免过快重新开始循环导致浪费一次识别机会
       delay_ms(300);
     } break;
-
-    case FP_ERR_PROTO: {
-      ret = PAM_AUTHTOK_ERR;
-      goto cleanup;
-    }
 
     case FP_OK:
     default:

@@ -63,7 +63,7 @@ static void usage(const char *prog) {
 
 static int run_command(int fd, enum cmd cmd, uint16_t id, uint8_t times,
                        uint16_t count, enum fp_light_mode mode, uint8_t color) {
-  enum fp_status st;
+  uint8_t st;
 
   switch (cmd) {
   case CMD_ENROLL:
@@ -101,7 +101,7 @@ static int run_command(int fd, enum cmd cmd, uint16_t id, uint8_t times,
     log_info("done");
     return 0;
   }
-  log_error("command failed (status 0x%02X, reason: %s)", st, fp_strstatus(st));
+  log_error("command failed (status 0x%02X, reason: %s)", st, fp_strcode(st));
   return 1;
 }
 
