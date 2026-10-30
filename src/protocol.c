@@ -286,7 +286,8 @@ uint8_t fp_read_sys_para(int fd) {
 
   ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("read sys para failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("read sys para failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   return ret;
 }
@@ -297,7 +298,8 @@ uint8_t fp_check_module_state(int fd) {
 
   ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("check module failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("check module failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   return ret;
 }
@@ -308,7 +310,8 @@ uint8_t fp_check_sensor_state(int fd) {
 
   ret = fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("check sensor failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("check sensor failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   return ret;
 }
@@ -319,7 +322,8 @@ uint8_t fp_reset_settings(int fd) {
 
   ret = fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("reset settings failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("reset settings failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   return ret;
 }
@@ -348,23 +352,8 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t ret = fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15);
 
-  if (ret == 0x00) {
-    log_info("enroll success!");
-  } else if (ret == 0x0B) {
-    log_error("id is invalid!");
-  } else if (ret == 0x25) {
-    log_error("enroll time is invalid!");
-  } else if (ret == 0x1F) {
-    log_error("the storage is full! use `allow_overwrite` to overwrite the "
-              "finger storage or delete some fingers!");
-  } else if (ret == 0x22) {
-    log_error("the id: %u already exists!", id);
-  } else if (ret == 0x0A) {
-    log_error("can not merge template!");
-  } else if (ret == 0x27) {
-    log_error("this finger is already enrolled!");
-  } else if (ret == 0x01) {
-    log_error("enroll failed for unknown reason!");
+  if (!IS_FP_OK(ret)) {
+    log_error("enroll failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
   }
 
   log_info("----------------------------------------------------");
@@ -386,7 +375,8 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   /* 模块的 timeout 大概在 11s 左右 */
   uint8_t ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15);
   if (!IS_FP_OK(ret)) {
-    log_error("auto identify failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("auto identify failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   log_info("====================================================");
   return ret;
@@ -402,7 +392,8 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
   uint8_t ret = fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
                             DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("control light failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("control light failed(err: %s, errcode: %d)", fp_strcode(ret),
+              ret);
   }
   return ret;
 }
@@ -437,7 +428,8 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
   ret = fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
                     DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("delete char/template failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("delete char/template failed(err: %s, errcode: %d)",
+              fp_strcode(ret), ret);
   }
   return ret;
 }
@@ -448,19 +440,42 @@ uint8_t fp_empty(int fd) {
 
   ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
   if (!IS_FP_OK(ret)) {
-    log_error("empty char/template failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
+    log_error("empty char/template failed(err: %s, errcode: %d)",
+              fp_strcode(ret), ret);
   }
   return ret;
 }
 
 const char *fp_strcode(uint8_t s) {
+/* some errcodes I do not want to expose */
+#define FP_ENROLL_TIME_INVALID 0x25
+#define FP_MERGE_TEMPLATE_FAILED 0x0A
+
   switch (s) {
   case FP_OK:
     return "Success";
+  case FP_FINGER_NOT_MATCHED:
+    return "Finger not matched";
+  case FP_ID_OUT_OF_STORAGE:
+    return "ID out of storage";
+  case FP_STORAGE_FULL:
+    return "Finger storage is full, use `allow_overwrite` to overwrite the "
+           "finger storage or delete some fingers to enroll new one";
+  case FP_ID_ALREADY_EXISTS:
+    return "ID already exists";
   case FP_TIMEOUT:
     return "Device/Syscall Timeout";
+  case FP_FINGER_ALREADY_ENROLLED:
+    return "Finger already enrolled";
+  case FP_ENROLL_TIME_INVALID:
+    return "Enroll time invalid";
+  case FP_MERGE_TEMPLATE_FAILED:
+    return "Merge template failed";
+
+    /* customized errcodes */
   case FP_IO_ERR:
     return "IO Error, perhaps device is popped";
+    /* end customized errcodes */
   case FP_FAIL:
   default:
     return "Failed";

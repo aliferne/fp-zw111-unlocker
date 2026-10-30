@@ -8,7 +8,21 @@
 #define FP_OK 0x00
 #define FP_FAIL 0x01
 #define FP_FINGER_NOT_MATCHED 0x09
+#define FP_ID_OUT_OF_STORAGE 0x0B
+#define FP_STORAGE_FULL 0x1F
+#define FP_ID_ALREADY_EXISTS 0x22
 #define FP_TIMEOUT 0x26
+#define FP_FINGER_ALREADY_ENROLLED 0x27
+
+// if (ret == 0x00) {
+//   log_info("enroll success!");
+// } else if (ret == 0x25) {
+//   log_error("enroll time is invalid!");
+// } else if (ret == 0x1F) {
+//   log_error("the storage is full! use `allow_overwrite` to overwrite the "
+//             "finger storage or delete some fingers!");
+// } else if (ret == 0x0A) {
+//   log_error("can not merge template!");
 
 /*  手册中最后一个错误码以 0x40 结束，下面是自定义情况 */
 
@@ -20,7 +34,8 @@
 #define IS_FP_FINGER_NOT_MATCHED(status)                                       \
   __IS_STATUS(status, FP_FINGER_NOT_MATCHED)
 #define IS_FP_TIMEOUT(status) __IS_STATUS(status, FP_TIMEOUT)
-#define IS_FP_FINGER_EXISTS(status) __IS_STATUS(status, 0x27)
+#define IS_FP_FINGER_EXISTS(status)                                            \
+  __IS_STATUS(status, FP_FINGER_ALREADY_ENROLLED)
 #define IS_FP_IO_ERR(status) __IS_STATUS(status, FP_IO_ERR)
 
 /* sum of the bytes that the checksum covers, takes the frame size as `len` */
