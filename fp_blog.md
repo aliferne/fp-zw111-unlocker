@@ -341,12 +341,12 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 
 1. https://zhuanlan.zhihu.com/p/663757925
 2. https://wiki.archlinux.org.cn/title/PAM
-3. [flag fPIC]: https://zhuanlan.zhihu.com/p/368364069
+3. flag fPIC: https://zhuanlan.zhihu.com/p/368364069
    同时 fPIC 选项可以参考 CSAPP 的第七章
-4. [gettext, msg(un)fmt command]: https://www.cnblogs.com/jjxhp/p/12036187.html
+4. gettext, msg(un)fmt command: https://www.cnblogs.com/jjxhp/p/12036187.html
 
 下面这些是一手资料，质量更好：
 
 1. http://www.fifi.org/doc/libpam-doc/html
 2. Linux man page of pam (`man pam`)
-3. [pamtester]: https://pamtester.sourceforge.net/
+3. pamtester: https://pamtester.sourceforge.net/
