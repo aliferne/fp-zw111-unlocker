@@ -1,17 +1,16 @@
-#include <security/_pam_types.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
 #include "log.h"
 #include "protocol.h"
-#include "serial.h"
+#include <termios.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <math.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/file.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -61,7 +60,7 @@ static int pam_open_fp() {
 
   log_info("now openning device: %s...", FINGER_MOD);
   while ((fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE)) == -1) {
-    sleep(1);
+    delay_ms(1000);
 
     if (is_time_reached(&start, MAX_TIMEOUT)) {
       if (GET_TIME(&start) != 0) {
@@ -83,19 +82,11 @@ static int pam_open_fp() {
 }
 
 /*
- * 下面这个代码就已经是原型了，但是需要完善如下的一些点：
- * - 重试机制：验证失败之后告知结果并等待一段时间后重新开放指纹验证
- * - 上锁：串口是独占资源，可能出现几个 sudo 要求共用验证的情况
- *          学学 flock
- *          需要让密码和指纹验证都能通过（并行化，类似于 kde 锁屏）
- *
  * FIXME: 指纹解锁成功后快速锁上，在一段窗口期内会再次解锁，即便没有做指纹验证
  *        窗口期大约从解锁成功后开始到绿灯熄灭后的 1s
  *        这个问题似乎不是我代码的问题，是 kscreenlocker 的问题
  *        我直接在下面那个 auth 函数 return PAM_SUCCESS 之后解锁再快速锁屏，
  *        这个 bug 依然会触发，这个问题不解决了
- *
- * 其他暂时想不到了，然后是命令行功能基本要照着 fprint 那个来做吧
  */
 
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
@@ -109,6 +100,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   // TODO: 妈的我还是希望能一直卡着，不然检测不到设备就要输入密码了
   if (fd == -1) {
     log_error("can not open device %s!", FINGER_MOD);
+    ret = PAM_AUTHINFO_UNAVAIL;
+    goto cleanup;
+  }
+  
+  if (flock(fd, LOCK_EX) == -1) {
+    log_error("can not lock device %s!", FINGER_MOD);
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
@@ -164,8 +161,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   log_info("identified!");
 
 cleanup:
-  if (fd != -1)
+  if (fd != -1) {
+    flock(fd, LOCK_UN);
     fp_close(fd);
+  }
 
   return ret;
 }

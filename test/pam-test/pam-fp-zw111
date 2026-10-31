@@ -1,0 +1,1 @@
+auth required pam_fprint_zw111.so

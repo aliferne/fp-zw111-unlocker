@@ -1,5 +1,5 @@
 write '-----THIS IS FD1-------' into test.txt (nbytes: 23)
-read test.txt into buf:  (nbytes: 0, errno: 0)
+read test.txt into buf: -----THIS IS FD1------- (nbytes: 23, errno: 0)
 write '-----THIS IS FD1-------' into test.txt (nbytes: 23)
 read test.txt into buf: -----THIS IS FD1------- (nbytes: 23, errno: 0)
 write '-----THIS IS FD1-------' into test.txt (nbytes: 23)

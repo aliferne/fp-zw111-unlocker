@@ -24,7 +24,7 @@ PAM 模块整体的工作流程：
 
 PAM 应用程序指定对应的 service --> 应用程序发起 `auth` 请求 --> libpam 在 service 内部配置找到对应 so 文件/模块 --> `dlopen` 打开 so 文件并调用对应函数 --> 处理结果返回 libpam 并进行下一步处理 --> PAM 程序收到 API 的返回码并进行对应的处理
 
-pam service 文件不带 .service 后缀还是挺神奇的，不知道是不是只有 systemd 会带这种后缀，此外该配置文件是 DSL，有一定的语法规则，由于配置文件的相关资料很多，这里只对需要用到的做简要说明。
+PAM 配置文件有一定的语法规则，由于配置文件的相关资料很多，这里只对需要用到的做简要说明。
 
 基本语法规则： `<type> <flag> <path> <args>`
 比如这个例子： `auth required xxx.so`，就表示 authentication （用户身份验证） 要求使用 `xxx.so` 这个模块， `xxx.so` 需要实现一些 PAM 模块要求的函数，然后通过返回 `PAM_*` 状态码告知是验证通过还是失败。
@@ -104,7 +104,7 @@ EOF
 sudo ln $(pwd)/pam-auth-test /etc/pam.d
 ```
 
-这样子通路就基本搭建完毕了，我们接下来自己写一个[应用程序](./pam_auth_test.c)
+这样子通路就基本搭建完毕了，我们接下来自己写一个 [应用程序](./pam_auth_test.c)，这里是有用的，我们不只要写验证模块，还要看应用模块的代码，到了下文就知道了，这里先卖个关子。
 
 然后编译：
 
@@ -334,10 +334,33 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 
 ---
 
-需要考虑对 fd 上锁，如果只用于 kde-fingerprint 就还好，但是如果用到 sudo 等程序中就会存在多进程的竞态条件
+建议是写一个文件然后在其他文件里面 `include` 这个文件，
+我写了个 [pam-fp-zw111](./test/pam_test/pam-fp-zw111)，然后链接过去
+接下来测试就可以 `pamtester pam-fp-zw111 $USER authenticate` 来写，更方便
+
+那么我们现在写的 [pam_fprint_zw111](./src/pam_fprint_zw111.c) 是没有 `flock` 的，
+当然我们现在是只在 kde-fingerprint 上用，但假如我们想加到 `sudo` 这个命令呢？或者任何有可能多进程的地方呢？事实上不上锁的情况对于单进程来说是没什么问题的，然而对于多进程来说，这种设计可能引发数据竞争，导致两个/多个进程读写的数据不准( [实验参考](test/fd-test) )，考虑到这一层，我们上锁是一个必然的操作。
+
+这里并不详细介绍文件上锁，详细讲解可以参考《Linux/Unix 系统编程手册》的第 55 章，对于我们这种只想要单一时间内只让一个进程访问设备的需求，我们应当选择互斥锁 `flock(fd, LOCK_EX);`。
+
+我设计了一个指纹模块加入锁相关代码前后的对照实验，我的操作看视频，总的来说我希望两个进程都能正常完成验证：
+
+不带锁的，可以看到数据竞争可能导致卡死：
+
+![fp-zw111-test-without-flock](./images/fp-zw111-test-without-flock.mp4)
+
+---
+
+带锁的，进程之间先到先得，符合互斥锁的现象：
+
+![fp-zw111-test-with-flock](./images/fp-zw111-test-with-flock.mp4)
 
 
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
+
+- 《Linux 系统编程》 Chapter 1, 2, 11
+- 《Linux/Unix 系统编程手册》 Chapter 23, 55, 附录 B —— 解析命令行选项
+- 《嵌入式 Linux 开发教程》（上） Chapter 16
 
 1. https://zhuanlan.zhihu.com/p/663757925
 2. https://wiki.archlinux.org.cn/title/PAM
