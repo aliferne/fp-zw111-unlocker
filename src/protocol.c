@@ -230,18 +230,23 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
  * uint8_t. */
 static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
                            size_t send_len, uint8_t *recv, size_t recv_len,
-                           float timeout) {
+                           float timeout, const char *fail_msg) {
   int nbr = 0;
-  uint8_t st = fp_send_cmd(fd, code, send, send_len);
+  uint8_t st;
 
   if ((st = fp_send_cmd(fd, code, send, send_len)) != FP_OK ||
       (st = fp_recv_pack(fd, recv, recv_len, &nbr, timeout)) != FP_OK) {
     log_error("send or recv failed(err: %s)", fp_strcode(st));
-    return st;
+    goto out;
   }
 
   st = fp_get_status_code(recv);
   log_debug("nbr: %d, p_recv->code: 0x%02x", nbr, st);
+  return st;
+
+out:
+  if (!IS_FP_OK(st))
+    log_error("%s (errcode: %d, errstr: %s)", fail_msg, st, fp_strcode(st));
   return st;
 }
 
@@ -282,50 +287,30 @@ int fp_open(const char *devname, unsigned int baudrate) {
 
 uint8_t fp_read_sys_para(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("read sys para failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "read sys para failed");
 }
 
 uint8_t fp_check_module_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("check module failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "check module failed");
 }
 
 uint8_t fp_check_sensor_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("check sensor failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "check sensor failed");
 }
 
 uint8_t fp_reset_settings(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("reset settings failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "reset settings failed");
 }
 
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
@@ -340,7 +325,6 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
     return FP_FAIL;
   }
 
-  log_info("----------------------------------------------------");
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
   uint16_t param =
@@ -350,19 +334,13 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret = fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15);
 
-  if (!IS_FP_OK(ret)) {
-    log_error("enroll failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
-  }
-
-  log_info("----------------------------------------------------");
-  return ret;
+  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+                     "enroll failed");
 }
 
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
                          bool led_ctrl, bool return_status) {
-  log_info("====================================================");
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
   uint16_t param = ((!return_status) << 2 | led_ctrl << 0);
@@ -373,13 +351,8 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
   /* 模块的 timeout 大概在 11s 左右 */
-  uint8_t ret = fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15);
-  if (!IS_FP_OK(ret)) {
-    log_error("auto identify failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  log_info("====================================================");
-  return ret;
+  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+                     "auto identify failed");
 }
 
 /* control light band of the module */
@@ -389,61 +362,37 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
   uint8_t send[] = {(uint8_t)mode, start_color, end_color, cycles, period};
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  uint8_t ret = fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
-                            DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("control light failed(err: %s, errcode: %d)", fp_strcode(ret),
-              ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
+                     DEFAULT_TIMEOUT, "control light failed");
 }
 
 uint8_t fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("cancel failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "cancel failed");
 }
 
 uint8_t fp_sleep(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("sleep failed(err: %s, errcode: %d)", fp_strcode(ret), ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "sleep failed");
 }
 
 uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
-                    DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("delete char/template failed(err: %s, errcode: %d)",
-              fp_strcode(ret), ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
+                     DEFAULT_TIMEOUT, "delete char/template failed");
 }
 
 uint8_t fp_empty(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
-  uint8_t ret;
 
-  ret = fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT);
-  if (!IS_FP_OK(ret)) {
-    log_error("empty char/template failed(err: %s, errcode: %d)",
-              fp_strcode(ret), ret);
-  }
-  return ret;
+  return fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "empty char/template failed");
 }
 
 const char *fp_strcode(uint8_t s) {

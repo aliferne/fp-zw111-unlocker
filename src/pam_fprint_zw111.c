@@ -5,16 +5,13 @@
 #include "protocol.h"
 #include <termios.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/file.h>
-#include <time.h>
 #include <unistd.h>
 
-#define RECV_BUF_SIZE 64U
 #define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
 #define MAX_TIMEOUT (10.0f)
