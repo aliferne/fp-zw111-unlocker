@@ -245,7 +245,7 @@ static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
   return st;
 
 out:
-  if (!IS_FP_OK(st))
+  if (FP_IS_STATUS(st, FP_FAIL))
     log_error("%s (errcode: %d, errstr: %s)", fail_msg, st, fp_strcode(st));
   return st;
 }
@@ -270,7 +270,12 @@ int fp_open(const char *devname, unsigned int baudrate) {
            "now configuring terminal parameters...",
            devname);
 
-  fcntl(fd, F_SETFL, 0);
+  if (lockf(fd, F_TLOCK, 0) == -1) {
+    if (errno == EACCES || errno == EAGAIN) {
+      log_error("file: %s (fd: %d) locked!", devname, fd);
+    }
+    return -1;
+  }
   /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
      is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
   int ret =
@@ -279,10 +284,26 @@ int fp_open(const char *devname, unsigned int baudrate) {
     log_error("failed to configure the serial port!"
               "(ret: %d, errno: %s)",
               ret, strerror(errno));
-    close(fd);
+    fp_close(fd);
     return -1;
   }
   return fd;
+}
+
+int fp_close(int fd) {
+  if ((fd != -1) || (lockf(fd, F_ULOCK, 0) != -1) || (close(fd) != -1))
+    return 0;
+
+  log_error("unlock file or close file failed(fd: %d, err: %s)", fd,
+            strerror(errno));
+  return -1;
+}
+
+uint8_t fp_get_image(int fd) {
+  uint8_t buf[RECV_BUF_SIZE] = {0};
+
+  return fp_transact(fd, 0x01, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+                     "get image failed");
 }
 
 uint8_t fp_read_sys_para(int fd) {
@@ -403,6 +424,8 @@ const char *fp_strcode(uint8_t s) {
   switch (s) {
   case FP_OK:
     return "Success";
+  case FP_NO_FINGER:
+    return "Finger not on the sensor";
   case FP_FINGER_NOT_MATCHED:
     return "Finger not matched";
   case FP_ID_OUT_OF_STORAGE:

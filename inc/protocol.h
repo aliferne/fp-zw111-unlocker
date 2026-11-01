@@ -7,6 +7,7 @@
 
 #define FP_OK 0x00
 #define FP_FAIL 0x01
+#define FP_NO_FINGER 0x02
 #define FP_FINGER_NOT_MATCHED 0x09
 #define FP_ID_OUT_OF_STORAGE 0x0B
 #define FP_STORAGE_FULL 0x1F
@@ -28,15 +29,11 @@
 
 #define FP_IO_ERR 0x41
 
-#define __IS_STATUS(status, target) ((status) == (target))
-#define IS_FP_OK(status) __IS_STATUS(status, FP_OK)
-#define IS_FP_FAIL(status) __IS_STATUS(status, FP_FAIL)
-#define IS_FP_FINGER_NOT_MATCHED(status)                                       \
-  __IS_STATUS(status, FP_FINGER_NOT_MATCHED)
-#define IS_FP_TIMEOUT(status) __IS_STATUS(status, FP_TIMEOUT)
-#define IS_FP_FINGER_EXISTS(status)                                            \
-  __IS_STATUS(status, FP_FINGER_ALREADY_ENROLLED)
-#define IS_FP_IO_ERR(status) __IS_STATUS(status, FP_IO_ERR)
+#define FP_IS_STATUS(status, target) ((status) == (target))
+
+/* check if there's finger on the sensor
+   0: yes, 1: recv_pack_err, 2: no */
+uint8_t fp_get_image(int fd);
 
 /* sum of the bytes that the checksum covers, takes the frame size as `len` */
 uint16_t fp_get_checksum(const uint8_t *buf, size_t len);
@@ -81,9 +78,22 @@ enum fp_light_mode {
 #define FP_LIGHT_GREEN (0x02)
 #define FP_LIGHT_BLUE (0x01)
 
+/* 打开设备文件
+ *
+ * Args:
+ *  - devname: 设备名称 (e.g. /dev/ttyUSB0)
+ *  - baudrate: 波特率 (@see termios.h)
+ *
+ * Return:
+ *  0 成功， -1 失败
+ *
+ * 注意需要与 `fp_close` 一起调用，该函数会对打开的文件上非阻塞互斥锁，
+ * 使用 `fp_close` 以确保关闭文件时顺带释放锁
+ */
 int fp_open(const char *devname, unsigned int baudrate);
 
-#define fp_close(fd) close((fd))
+/* 释放文件锁并关闭文件 */
+int fp_close(int fd);
 
 /* 控制模组的三色灯。
  *

@@ -355,6 +355,9 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 
 ![fp-zw111-test-with-flock](./images/fp-zw111-test-with-flock.mp4)
 
+PAT: 我们能不能直接在 fcntl 层面上上锁？不需要 flock
+     此外发现 lockf, 基于 fcntl 的封装
+NOTE: 思路可行，晚点补充/修改博客内容
 
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 

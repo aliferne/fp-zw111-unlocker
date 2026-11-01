@@ -1,15 +1,16 @@
+#include <fcntl.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
 #include "log.h"
 #include "protocol.h"
-#include <termios.h>
 #include <errno.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/file.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define FINGER_MOD "/dev/FP_ZW111"
@@ -100,12 +101,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
-  
-  if (flock(fd, LOCK_EX) == -1) {
-    log_error("can not lock device %s!", FINGER_MOD);
-    ret = PAM_AUTHINFO_UNAVAIL;
-    goto cleanup;
-  }
+
+  // if (flock(fd, LOCK_EX) == -1) {
+  //   log_error("can not lock device %s!", FINGER_MOD);
+  //   ret = PAM_AUTHINFO_UNAVAIL;
+  //   goto cleanup;
+  // }
 
   int retry = 0;
   pam_info(pamh, "设备已连接");
@@ -114,13 +115,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false)) != FP_OK) {
     delay_ms(500);
 
-    switch (status) {
-    case FP_TIMEOUT: {
+    if (FP_IS_STATUS(status, FP_TIMEOUT)) {
       log_warn("module identify timeout, retrying...");
       continue;
     }
 
-    case FP_IO_ERR: {
+    if (FP_IS_STATUS(status, FP_IO_ERR)) {
       pam_info(pamh, "设备已断开连接，尝试重连中...");
       log_warn("device is removed!");
 
@@ -132,10 +132,11 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       }
 
       pam_info(pamh, "设备已连接");
-    } break;
+      continue;
+    }
 
-      // tried to unlock by finger not enrolled
-    case FP_FINGER_NOT_MATCHED: {
+    // tried to unlock by finger not enrolled
+    if (FP_IS_STATUS(status, FP_FINGER_NOT_MATCHED)) {
       if (++retry >= MAX_RETRY) {
         log_error("identify failed, max retry exceeded!");
         fp_close(fd);
@@ -146,12 +147,14 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       pam_info(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
       log_warn("you still have %d chance(s) to identify.", MAX_RETRY - retry);
       // 避免过快重新开始循环导致浪费一次识别机会
-      delay_ms(300);
-    } break;
+      // delay_ms(300);
 
-    case FP_OK:
-    default:
-      break;
+      while (FP_IS_STATUS(fp_get_image(fd), FP_OK)) {
+        sleep(1);
+        log_warn("Please remove your finger");
+        pam_info(pamh, "请先移开你的手指");
+      }
+      pam_info(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
     }
   }
 
@@ -159,7 +162,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
 cleanup:
   if (fd != -1) {
-    flock(fd, LOCK_UN);
     fp_close(fd);
   }
 
