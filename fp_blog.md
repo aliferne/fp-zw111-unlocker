@@ -347,6 +347,8 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 
 不带锁的，可以看到数据竞争可能导致卡死：
 
+NOTE: 两个视频的录像都有问题，重录
+
 ![fp-zw111-test-without-flock](./images/fp-zw111-test-without-flock.mp4)
 
 ---
@@ -358,6 +360,26 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 PAT: 我们能不能直接在 fcntl 层面上上锁？不需要 flock
      此外发现 lockf, 基于 fcntl 的封装
 NOTE: 思路可行，晚点补充/修改博客内容
+
+```bash
+> sudo adduser "testusr"
+
+> pamtester pam-fp-zw111 "testusr" authenticate
+17:27:46 INFO  src/pam_fprint_zw111.c:92: pam_sm_authenticate called with flags: 0x00, argc: 0
+17:27:46 INFO  src/pam_fprint_zw111.c:59: now openning device: /dev/FP_ZW111...
+17:27:46 INFO  src/protocol.c:255: now openning device /dev/FP_ZW111...
+17:27:46 INFO  src/protocol.c:269: device /dev/FP_ZW111 opened, now configuring terminal parameters...
+17:27:46 INFO  src/pam_fprint_zw111.c:78: device opened!
+设备已连接
+17:27:46 INFO  src/pam_fprint_zw111.c:113: please place your finger on the module
+17:27:46 DEBUG src/protocol.c:124: fill pack: id=1 code=32 data_len=5 total_len=17 checksum=0240
+send:         EF 01 FF FF FF FF 01 00 08 32 02 FF FF 00 05 02 40
+17:27:46 DEBUG src/protocol.c:163: write 17 bytes
+recv:         EF 01 FF FF FF FF 07 00 08 00 05 00 01 04 A9 00 C2
+17:27:48 DEBUG src/protocol.c:244: nbr: 17, p_recv->code: 0x00
+17:27:48 INFO  src/pam_fprint_zw111.c:161: identified!
+pamtester: successfully authenticated
+```
 
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 

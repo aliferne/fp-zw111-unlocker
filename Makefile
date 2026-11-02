@@ -31,7 +31,8 @@ DEFFLAGS += -DLOG_USE_COLOR
 
 .PHONY: all run pam clean
 
-all: $(MAIN_TARGET) $(PAM_TARGET) $(CLI_TARGET)
+# all: $(MAIN_TARGET) $(PAM_TARGET) $(CLI_TARGET)
+all: $(PAM_TARGET) $(CLI_TARGET)
 
 run_main: $(MAIN_TARGET)
 	@./$(MAIN_TARGET)
