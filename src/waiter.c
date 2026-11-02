@@ -8,7 +8,7 @@ double mono_ms() {
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return 0;
 
-  return (double)(now.tv_sec) * 1E4L + (double)(now.tv_nsec) / 1E6L;
+  return (double)(now.tv_sec) * 1E3 + (double)(now.tv_nsec) / 1E6;
 }
 
 void delay_ms(unsigned int ms) {
