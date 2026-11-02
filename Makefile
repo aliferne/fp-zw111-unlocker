@@ -25,8 +25,8 @@ CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
-DEFFLAGS += -DLOG_USE_COLOR \
-	 -DPROTOCOL_USE_LOG
+DEFFLAGS += -DLOG_USE_COLOR
+	# -DPROTOCOL_USE_LOG
 	# -DSERIAL_DEBUG_ON
 
 .PHONY: all run pam clean
@@ -39,7 +39,7 @@ run_main: $(MAIN_TARGET)
 ARGS := -h
 run_cli: $(CLI_TARGET)
 	@./$(CLI_TARGET) $(ARGS)
-	
+
 pam: $(PAM_TARGET)
 
 cli: $(CLI_TARGET)
@@ -48,7 +48,7 @@ cli: $(CLI_TARGET)
 clean:
 	rm -rf $(BUILD_DIR)
 
-$(MAIN_TARGET): $(APP_SRCS) 
+$(MAIN_TARGET): $(APP_SRCS)
 	@echo "===================== building main target ====================="
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $^ -o $@

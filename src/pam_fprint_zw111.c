@@ -15,7 +15,7 @@
 
 #define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
-#define MAX_TIMEOUT (10.0f)
+#define MAX_TIMEOUT (3.0f)
 #define MAX_RETRY (5)
 
 #define GET_TIME(ts) clock_gettime(CLOCK_MONOTONIC, (ts))
@@ -58,21 +58,21 @@ static int pam_open_fp() {
 
   log_info("now openning device: %s...", FINGER_MOD);
   while ((fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE)) == -1) {
-    delay_ms(1000);
+    delay_ms(100);
+    if (!is_time_reached(&start, MAX_TIMEOUT))
+      continue;
 
-    if (is_time_reached(&start, MAX_TIMEOUT)) {
-      if (GET_TIME(&start) != 0) {
-        log_error("can not get time!");
-        return -1;
-      }
-
-      if (++retries > MAX_RETRY) {
-        log_error("open failed, max retry exceeded!");
-        return -1;
-      }
-      log_warn("trying openning device %s for %d/%d time(s) now", FINGER_MOD,
-               retries, MAX_RETRY);
+    if (GET_TIME(&start) != 0) {
+      log_error("can not get time!");
+      return -1;
     }
+
+    if (++retries > MAX_RETRY) {
+      log_error("open failed, max retry exceeded!");
+      return -1;
+    }
+    log_warn("trying openning device %s for %d/%d time(s) now", FINGER_MOD,
+             retries, MAX_RETRY);
   }
 
   log_info("device opened!");
@@ -95,23 +95,22 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   int ret = PAM_SUCCESS;
   uint8_t status;
   int fd = pam_open_fp();
-  // TODO: 妈的我还是希望能一直卡着，不然检测不到设备就要输入密码了
+
   if (fd == -1) {
     log_error("can not open device %s!", FINGER_MOD);
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
 
-  // if (flock(fd, LOCK_EX) == -1) {
-  //   log_error("can not lock device %s!", FINGER_MOD);
-  //   ret = PAM_AUTHINFO_UNAVAIL;
-  //   goto cleanup;
-  // }
-
   int retry = 0;
   pam_info(pamh, "设备已连接");
   log_info("please place your finger on the module");
 
+  /* 此处表示以置信度 2 (较为常用) 的等级遍历所有指纹，只要找到符合的就返回
+     FP_OK 这意味着只要有人录入指纹，他就可以解锁 Linux PC
+     上任何一个用户，这当然是不安全的，
+     但我的场景只是自用，因此不考虑这些安全问题。
+     毕竟如果真要安全的话就不会选择自己 DIY 了(doge) */
   while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false)) != FP_OK) {
     delay_ms(500);
 
@@ -121,8 +120,8 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     }
 
     if (FP_IS_STATUS(status, FP_IO_ERR)) {
-      pam_info(pamh, "设备已断开连接，尝试重连中...");
       log_warn("device is removed!");
+      pam_info(pamh, "设备已断开连接，尝试重连中...");
 
       fp_close(fd);
       if ((fd = pam_open_fp()) == -1) {
@@ -131,6 +130,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
         goto cleanup;
       }
 
+      log_info("device recconected");
       pam_info(pamh, "设备已连接");
       continue;
     }
@@ -139,22 +139,21 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     if (FP_IS_STATUS(status, FP_FINGER_NOT_MATCHED)) {
       if (++retry >= MAX_RETRY) {
         log_error("identify failed, max retry exceeded!");
-        fp_close(fd);
-        return PAM_AUTH_ERR;
+        ret = PAM_AUTH_ERR;
+        goto cleanup;
+      }
+      // 避免过快重新开始循环导致浪费一次识别机会
+      // delay_ms(300);
+      while (FP_IS_STATUS(fp_get_image(fd), FP_OK)) {
+        delay_ms(1000);
+        log_warn("Please remove your finger");
+        pam_info(pamh, "请先移开你的手指");
       }
 
       // it'll show a QtWidget with the text
       pam_info(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
       log_warn("you still have %d chance(s) to identify.", MAX_RETRY - retry);
-      // 避免过快重新开始循环导致浪费一次识别机会
-      // delay_ms(300);
-
-      while (FP_IS_STATUS(fp_get_image(fd), FP_OK)) {
-        sleep(1);
-        log_warn("Please remove your finger");
-        pam_info(pamh, "请先移开你的手指");
-      }
-      pam_info(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
+      continue;
     }
   }
 
