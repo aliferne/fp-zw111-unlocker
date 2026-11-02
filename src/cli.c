@@ -1,15 +1,13 @@
-/* fp - ZW111 fingerprint module CLI skeleton (getopt_long demo).
+/* fp - ZW111 fingerprint module CLI (getopt_long demo).
  *
- * build: gcc -Wall -Wextra -Iinc ai/fp.c src/protocol.c src/serial.c src/log.c
- * -o fp usage: ./fp --enroll --id 1 --times 3
- *        ./fp --identify
- *        ./fp --light --mode 1 --color 6
+ * build: make cli
+ * usage: ./build/cli --enroll --id 1 --times 3
+ *        ./build/cli --identify
+ *        ./build/cli --light --mode 1 --color 6
  */
 
 #include "log.h"
 #include "protocol.h"
-#include "serial.h"
-
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -25,10 +23,13 @@ enum cmd {
   CMD_NONE,
   CMD_ENROLL,
   CMD_IDENTIFY,
+  CMD_GET_IMAGE,
   CMD_DELETE,
   CMD_EMPTY,
-  CMD_CHECK,
+  CMD_CHECK_MODULE,
+  CMD_CHECK_SENSOR,
   CMD_SYS,
+  CMD_RESET,
   CMD_CANCEL,
   CMD_SLEEP,
   CMD_LIGHT,
@@ -43,14 +44,17 @@ static void usage(const char *prog) {
   printf("  -e, --enroll         enroll one finger (needs --id, optional "
          "--times)\n");
   printf("  -v, --identify       1:1/1:N search for a finger(optional --id)\n");
+  printf("  -g, --get-image      capture one image / probe the finger\n");
   printf("  -d, --delete         delete templates (needs --id, optional "
          "--count)\n");
   printf("  -E, --empty          delete all templates\n");
-  printf("  -c, --check          handshake / check module is alive\n");
+  printf("  -c, --check          check module is alive\n");
+  printf("  -k, --check-sensor   check sensor state\n");
   printf("  -S, --sys-param      read system basic parameters\n");
+  printf("  -r, --reset          reset module settings\n");
   printf("  -C, --cancel         cancel auto enroll / identify\n");
   printf("  -s, --sleep          put module to sleep\n");
-  printf("  -L, --light          turn on led (use --mode/--color)\n");
+  printf("  -L, --light          control led (use --mode/--color)\n");
   printf("\noptions:\n");
   printf("  -D, --device PATH    serial device (default %s)\n", DEFAULT_DEV);
   printf("  -i, --id N           finger id / start id (default 0)\n");
@@ -72,17 +76,26 @@ static int run_command(int fd, enum cmd cmd, uint16_t id, uint8_t times,
   case CMD_IDENTIFY:
     st = fp_auto_identify(fd, 2, id, true, false);
     break;
+  case CMD_GET_IMAGE:
+    st = fp_get_image(fd);
+    break;
   case CMD_DELETE:
     st = fp_delete_char(fd, id, count);
     break;
   case CMD_EMPTY:
     st = fp_empty(fd);
     break;
-  case CMD_CHECK:
+  case CMD_CHECK_MODULE:
     st = fp_check_module_state(fd);
+    break;
+  case CMD_CHECK_SENSOR:
+    st = fp_check_sensor_state(fd);
     break;
   case CMD_SYS:
     st = fp_read_sys_para(fd);
+    break;
+  case CMD_RESET:
+    st = fp_reset_settings(fd);
     break;
   case CMD_CANCEL:
     st = fp_cancel(fd);
@@ -117,10 +130,13 @@ int main(int argc, char **argv) {
   static struct option longopts[] = {
       {"enroll", no_argument, 0, 'e'},
       {"identify", no_argument, 0, 'v'},
+      {"get-image", no_argument, 0, 'g'},
       {"delete", no_argument, 0, 'd'},
       {"empty", no_argument, 0, 'E'},
       {"check", no_argument, 0, 'c'},
+      {"check-sensor", no_argument, 0, 'k'},
       {"sys-param", no_argument, 0, 'S'},
+      {"reset", no_argument, 0, 'r'},
       {"cancel", no_argument, 0, 'C'},
       {"sleep", no_argument, 0, 's'},
       {"light", no_argument, 0, 'L'},
@@ -135,14 +151,17 @@ int main(int argc, char **argv) {
   };
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "evdEcSsLD:i:t:n:h", longopts, NULL)) !=
-         -1) {
+  while ((opt = getopt_long(argc, argv, "evgdEcSskrLD:i:t:n:h", longopts,
+                            NULL)) != -1) {
     switch (opt) {
     case 'e':
       cmd = CMD_ENROLL;
       break;
     case 'v':
       cmd = CMD_IDENTIFY;
+      break;
+    case 'g':
+      cmd = CMD_GET_IMAGE;
       break;
     case 'd':
       cmd = CMD_DELETE;
@@ -151,10 +170,16 @@ int main(int argc, char **argv) {
       cmd = CMD_EMPTY;
       break;
     case 'c':
-      cmd = CMD_CHECK;
+      cmd = CMD_CHECK_MODULE;
+      break;
+    case 'k':
+      cmd = CMD_CHECK_SENSOR;
       break;
     case 'S':
       cmd = CMD_SYS;
+      break;
+    case 'r':
+      cmd = CMD_RESET;
       break;
     case 'C':
       cmd = CMD_CANCEL;
