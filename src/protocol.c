@@ -192,7 +192,7 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
     /* POLLHUP/POLLERR shows up when the tty is torn down (device unplugged) */
     if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
       log_error("device hangup/error (revents=0x%x)", (unsigned)pfd.revents);
-      return FP_TIMEOUT;
+      return FP_IO_ERR;
     }
 
     ssize_t br = read(fd, buf + got, want - got);
@@ -213,7 +213,7 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
       uint16_t pack_len =
           ((uint16_t)buf[FP_OFF_PACKLEN] << 8) | buf[FP_OFF_PACKLEN + 1];
       want = FP_PACKHEADER_SIZE + pack_len;
-      if (want > len) { // TODO: 按道理来说这种的可能性还挺小的
+      if (want > len) { // 按道理来说这种的可能性还挺小的
         log_error("frame too large: %zu > %zu", want, len);
         return FP_FAIL;
       }
