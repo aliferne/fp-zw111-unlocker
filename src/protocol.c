@@ -242,11 +242,11 @@ static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
 
   st = fp_get_status_code(recv);
   log_debug("nbr: %d, p_recv->code: 0x%02x", nbr, st);
-  return st;
 
 out:
-  if (FP_IS_STATUS(st, FP_FAIL))
+  if (!FP_IS_STATUS(st, FP_OK)) {
     log_error("%s (errcode: %d, errstr: %s)", fail_msg, st, fp_strcode(st));
+  }
   return st;
 }
 
@@ -263,7 +263,7 @@ int fp_open(const char *devname, unsigned int baudrate) {
   if (isatty(fd) == 0) {
     log_error("the device %s is not a tty, we can not set serial for it!",
               devname);
-    return -1;
+    goto err_cleanup;
   }
 
   log_info("device %s opened, "
@@ -274,29 +274,43 @@ int fp_open(const char *devname, unsigned int baudrate) {
     if (errno == EACCES || errno == EAGAIN) {
       log_error("file: %s (fd: %d) locked!", devname, fd);
     }
-    return -1;
+    goto err_cleanup;
   }
   /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
      is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
-  int ret =
-      serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0);
+  int ret;
+  ret = serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0);
   if (ret != 0) {
     log_error("failed to configure the serial port!"
               "(ret: %d, errno: %s)",
               ret, strerror(errno));
-    fp_close(fd);
-    return -1;
+    goto err_cleanup;
   }
+
   return fd;
+
+err_cleanup:
+  fp_close(fd);
+  return -1;
 }
 
 int fp_close(int fd) {
-  if ((fd != -1) || (lockf(fd, F_ULOCK, 0) != -1) || (close(fd) != -1))
-    return 0;
+  if (fd == -1) {
+    log_error("fd is negative");
+    return -1;
+  }
 
-  log_error("unlock file or close file failed(fd: %d, err: %s)", fd,
-            strerror(errno));
-  return -1;
+  int ret = 0;
+  if (lockf(fd, F_ULOCK, 0) == -1) {
+    log_error("unlock file failed(fd: %d, err: %s)", fd, strerror(errno));
+    ret = -1;
+  }
+  if (close(fd) == -1 && errno != EINTR) {
+    log_error("close file failed(fd: %d, err: %s)", fd, strerror(errno));
+    ret = -1;
+  }
+
+  return ret;
 }
 
 uint8_t fp_get_image(int fd) {

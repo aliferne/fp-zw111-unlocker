@@ -17,7 +17,7 @@ APP_SRCS := $(CORE_SRCS) $(MAIN_SRC)
 
 # 生成目标文件
 OBJS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(APP_SRCS))
-TARGET := $(BUILD_DIR)/fingerprint
+MAIN_TARGET := $(BUILD_DIR)/fingerprint
 PAM_TARGET := $(BUILD_DIR)/pam_fprint_zw111.so
 CLI_TARGET := $(BUILD_DIR)/cli
 
