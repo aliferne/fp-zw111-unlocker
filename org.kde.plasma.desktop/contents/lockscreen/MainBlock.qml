@@ -4,6 +4,12 @@
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
 
+/*
+ * \author Ferne
+ * \date 2026/11/2
+ * \brief modified fingerprinet-related UI
+ */
+
 import QtQuick 2.2
 
 import QtQuick.Layouts 1.1
@@ -42,7 +48,7 @@ SessionManagementScreen {
     }
 
     function startLogin() {
-        const password = passwordBox.text
+        const password = passwordBox.text;
 
         // This is partly because it looks nicer, but more importantly it
         // works round a Qt bug that can trigger if the app is closed with a
@@ -83,18 +89,18 @@ SessionManagementScreen {
             Keys.onPressed: event => {
                 if (event.key === Qt.Key_Left && !text) {
                     userList.decrementCurrentIndex();
-                    event.accepted = true
+                    event.accepted = true;
                 }
                 if (event.key === Qt.Key_Right && !text) {
                     userList.incrementCurrentIndex();
-                    event.accepted = true
+                    event.accepted = true;
                 }
             }
 
             Connections {
                 target: root
                 function onClearPassword() {
-                    passwordBox.forceActiveFocus()
+                    passwordBox.forceActiveFocus();
                     passwordBox.text = "";
                     passwordBox.text = Qt.binding(() => PasswordSync.password);
                 }
@@ -122,8 +128,8 @@ SessionManagementScreen {
             Keys.onReturnPressed: clicked()
         }
     }
-    
-    component FPLabel : PlasmaComponents3.Label {
+
+    component FPLabel: PlasmaComponents3.Label {
         id: _fpLabel
         required property int kind
         required property string label
@@ -139,18 +145,18 @@ SessionManagementScreen {
 
             function onNoninteractiveInfo(kind, authenticator) {
                 if (kind & _fpLabel.kind) {
-                    _fpLabel.text = Qt.binding(() => authenticator.infoMessage)
-               }
-           }
+                    _fpLabel.text = Qt.binding(() => authenticator.infoMessage);
+                }
+            }
         }
     }
-    
+
     FPLabel {
         kind: ScreenLocker.Authenticator.Fingerprint
         label: "(此处显示与指纹模块 ZW111 有关的信息)"
     }
 
-    component FailableLabel : PlasmaComponents3.Label {
+    component FailableLabel: PlasmaComponents3.Label {
         id: _failableLabel
         required property int kind
         required property string label
@@ -172,8 +178,8 @@ SessionManagementScreen {
 
             function onNoninteractiveError(kind, authenticator) {
                 if (kind & _failableLabel.kind) {
-                    _failableLabel.text = Qt.binding(() => authenticator.errorMessage)
-                    _rejectAnimation.start()
+                    _failableLabel.text = Qt.binding(() => authenticator.errorMessage);
+                    _rejectAnimation.start();
                 }
             }
         }
@@ -182,15 +188,11 @@ SessionManagementScreen {
             id: _timer
             interval: Kirigami.Units.humanMoment
             onTriggered: {
-                _failableLabel.text = Qt.binding(() => _failableLabel.label)
+                _failableLabel.text = Qt.binding(() => _failableLabel.label);
             }
         }
     }
 
-    FailableLabel {
-        kind: ScreenLocker.Authenticator.Fingerprint
-        label: i18nd("plasma_shell_org.kde.plasma.desktop", "(or scan your fingerprint on the reader)")
-    }
     FailableLabel {
         kind: ScreenLocker.Authenticator.Smartcard
         label: i18nd("plasma_shell_org.kde.plasma.desktop", "(or scan your smartcard)")
