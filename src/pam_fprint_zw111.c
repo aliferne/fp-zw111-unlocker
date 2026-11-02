@@ -1,10 +1,11 @@
 #include <fcntl.h>
+#include <time.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
 #include "log.h"
 #include "protocol.h"
-#include <errno.h>
+#include "waiter.h"
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
 #include <stdbool.h>
@@ -15,68 +16,23 @@
 
 #define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
-#define MAX_TIMEOUT (3.0f)
-#define MAX_RETRY (5)
+#define MAX_TIMEOUT (10.0f * 1000)
+#define FP_IDENTIFY_MAX_RETRY (5)
+#define FP_ERR_MAX_RETRY (5)
 
-#define GET_TIME(ts) clock_gettime(CLOCK_MONOTONIC, (ts))
+static enum wait_stat pam_open_fp(void *ctx) {
+  int *fd = ctx;
+  enum wait_stat ret = WAIT_DONE;
+  *fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE);
 
-/* ms 级的时间检测 */
-static bool is_time_reached(const struct timespec *start, double timeout) {
-  struct timespec now;
-  if (GET_TIME(&now) != 0) {
-    return false;
+  if (*fd >= 0) {
+    log_info("device opened!");
+    return ret;
   }
+  ret = (*fd == -2) ? WAIT_BLOCKED : WAIT_AGAIN;
 
-  double time_diff = (double)(now.tv_sec - start->tv_sec) +
-                     (double)(now.tv_nsec - start->tv_nsec) / 1E9;
-  return timeout - time_diff <= 1E-3;
-}
-
-static void delay_ms(unsigned int ms) {
-  struct timespec req, rem;
-  req.tv_sec = ms / 1000;
-  req.tv_nsec = (ms % 1000) * 1E6;
-
-  while (nanosleep(&req, &rem) == -1) {
-    if (errno == EINTR)
-      req = rem;
-    else
-      break;
-  }
-}
-
-/* return fd or -1 if failed */
-static int pam_open_fp() {
-  int fd;
-  int retries = 0;
-  struct timespec start;
-
-  if (GET_TIME(&start) != 0) {
-    log_error("can not get time!");
-    return -1;
-  }
-
-  log_info("now openning device: %s...", FINGER_MOD);
-  while ((fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE)) == -1) {
-    delay_ms(100);
-    if (!is_time_reached(&start, MAX_TIMEOUT))
-      continue;
-
-    if (GET_TIME(&start) != 0) {
-      log_error("can not get time!");
-      return -1;
-    }
-
-    if (++retries > MAX_RETRY) {
-      log_error("open failed, max retry exceeded!");
-      return -1;
-    }
-    log_warn("trying openning device %s for %d/%d time(s) now", FINGER_MOD,
-             retries, MAX_RETRY);
-  }
-
-  log_info("device opened!");
-  return fd;
+  *fd = -1;
+  return ret;
 }
 
 /*
@@ -94,15 +50,18 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   int ret = PAM_SUCCESS;
   uint8_t status;
-  int fd = pam_open_fp();
+  int fd;
+  enum wait_stat wst;
 
-  if (fd == -1) {
-    log_error("can not open device %s!", FINGER_MOD);
+  wst = exec_until(MAX_TIMEOUT, 1000, pam_open_fp, &fd);
+  if (wst != WAIT_DONE) {
+    log_error("can not open device %s (err: %s)", FINGER_MOD, wstatstr(wst));
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
 
-  int retry = 0;
+  int err_retry = 0;
+  int identify_retry = 0;
   pam_info(pamh, "设备已连接");
   log_info("please place your finger on the module");
 
@@ -114,30 +73,32 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false)) != FP_OK) {
     delay_ms(500);
 
-    if (FP_IS_STATUS(status, FP_TIMEOUT)) {
+    switch (status) {
+    case FP_TIMEOUT:
       log_warn("module identify timeout, retrying...");
       continue;
-    }
 
-    if (FP_IS_STATUS(status, FP_IO_ERR)) {
+    case FP_IO_ERR:
       log_warn("device is removed!");
       pam_info(pamh, "设备已断开连接，尝试重连中...");
 
       fp_close(fd);
-      if ((fd = pam_open_fp()) == -1) {
-        log_error("can not open device %s!", FINGER_MOD);
+
+      wst = exec_until(MAX_TIMEOUT, 1000, pam_open_fp, &fd);
+      if (wst != WAIT_DONE) {
+        log_error("can not open device %s (err: %s)", FINGER_MOD,
+                  wstatstr(wst));
         ret = PAM_AUTHINFO_UNAVAIL;
         goto cleanup;
       }
 
-      log_info("device recconected");
+      log_info("device reconnected");
       pam_info(pamh, "设备已连接");
       continue;
-    }
 
-    // tried to unlock by finger not enrolled
-    if (FP_IS_STATUS(status, FP_FINGER_NOT_MATCHED)) {
-      if (++retry >= MAX_RETRY) {
+      // tried to unlock by finger not enrolled
+    case FP_FINGER_NOT_MATCHED:
+      if (++identify_retry >= FP_IDENTIFY_MAX_RETRY) {
         log_error("identify failed, max retry exceeded!");
         ret = PAM_AUTH_ERR;
         goto cleanup;
@@ -149,11 +110,29 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
         log_warn("Please remove your finger");
         pam_info(pamh, "请先移开你的手指");
       }
-
+      int times_left = FP_IDENTIFY_MAX_RETRY - identify_retry;
       // it'll show a QtWidget with the text
-      pam_info(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);
-      log_warn("you still have %d chance(s) to identify.", MAX_RETRY - retry);
+      pam_info(pamh, "你还有 %d 次重试机会", times_left);
+      log_warn("you still have %d chance(s) to identify.", times_left);
       continue;
+
+    case FP_FINGER_STORAGE_EMPTY:
+    case FP_FINGER_TEMPLATE_EMPTY:
+      log_error("something went wrong(errcode: %d, errstr: %s)", status,
+                fp_strcode(status));
+      ret = PAM_AUTHINFO_UNAVAIL;
+      goto cleanup;
+
+    case FP_FAIL:
+    default:
+      log_error("something went wrong(errcode: %d, errstr: %s)", status,
+                fp_strcode(status));
+      if (++err_retry >= FP_ERR_MAX_RETRY) {
+        log_error("fp_err_max_retry exceeded!");
+        ret = PAM_AUTH_ERR;
+        goto cleanup;
+      }
+      break;
     }
   }
 
@@ -161,6 +140,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
 cleanup:
   if (fd != -1) {
+    if (ret != PAM_SUCCESS) {
+      fp_cancel(fd);
+    }
     fp_close(fd);
   }
 
