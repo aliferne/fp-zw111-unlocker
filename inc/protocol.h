@@ -12,6 +12,10 @@
 #define FP_ID_OUT_OF_STORAGE 0x0B
 #define FP_STORAGE_FULL 0x1F
 #define FP_ID_ALREADY_EXISTS 0x22
+// the fingerprint in the specific id is empty
+#define FP_FINGER_TEMPLATE_EMPTY 0x23
+// no fingerprints in the whole storage
+#define FP_FINGER_STORAGE_EMPTY 0x24
 #define FP_TIMEOUT 0x26
 #define FP_FINGER_ALREADY_ENROLLED 0x27
 

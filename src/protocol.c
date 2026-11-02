@@ -250,7 +250,7 @@ out:
   return st;
 }
 
-/* return fd when successfully opened, -1 if not */
+/* return fd when successfully opened, -1 if not, -2 if locked */
 int fp_open(const char *devname, unsigned int baudrate) {
   log_info("now openning device %s...", devname);
 
@@ -263,7 +263,8 @@ int fp_open(const char *devname, unsigned int baudrate) {
   if (isatty(fd) == 0) {
     log_error("the device %s is not a tty, we can not set serial for it!",
               devname);
-    goto err_cleanup;
+    fp_close(fd);
+    return -1;
   }
 
   log_info("device %s opened, "
@@ -274,7 +275,8 @@ int fp_open(const char *devname, unsigned int baudrate) {
     if (errno == EACCES || errno == EAGAIN) {
       log_error("file: %s (fd: %d) locked!", devname, fd);
     }
-    goto err_cleanup;
+    fp_close(fd);
+    return -2;
   }
   /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
      is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
@@ -284,14 +286,11 @@ int fp_open(const char *devname, unsigned int baudrate) {
     log_error("failed to configure the serial port!"
               "(ret: %d, errno: %s)",
               ret, strerror(errno));
-    goto err_cleanup;
+    fp_close(fd);
+    return -1;
   }
 
   return fd;
-
-err_cleanup:
-  fp_close(fd);
-  return -1;
 }
 
 int fp_close(int fd) {
@@ -449,6 +448,10 @@ const char *fp_strcode(uint8_t s) {
            "finger storage or delete some fingers to enroll new one";
   case FP_ID_ALREADY_EXISTS:
     return "ID already exists";
+  case FP_FINGER_TEMPLATE_EMPTY:
+    return "The finger template in the specific id is empty";
+  case FP_FINGER_STORAGE_EMPTY:
+    return "The finger storage is empty, please enroll some fingers first";
   case FP_TIMEOUT:
     return "Device/Syscall Timeout";
   case FP_FINGER_ALREADY_ENROLLED:
