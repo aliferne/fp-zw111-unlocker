@@ -11,7 +11,7 @@ CLI_SRCS := $(SRC_DIR)/cli.c
 HEADERS := $(wildcard $(INC_DIR)/*.h)
 
 # 公共核心源码（协议、串口、日志等，主程序与 PAM 模块共用）
-CORE_SRCS := $(filter-out $(MAIN_SRC) $(PAM_SRC), $(wildcard $(SRC_DIR)/*.c))
+CORE_SRCS := $(filter-out $(MAIN_SRC) $(CLI_SRC) $(PAM_SRC), $(wildcard $(SRC_DIR)/*.c))
 # 主程序源码：核心源码 + main.c，不包含 PAM 模块
 APP_SRCS := $(CORE_SRCS) $(MAIN_SRC)
 
@@ -28,6 +28,7 @@ INCFLAGS := -I$(INC_DIR)
 DEFFLAGS += -DLOG_USE_COLOR
 	# -DPROTOCOL_USE_LOG
 	# -DSERIAL_DEBUG_ON
+	# -DPAM_USE_LOG_H
 
 .PHONY: all run pam clean
 

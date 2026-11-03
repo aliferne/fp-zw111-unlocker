@@ -18,8 +18,9 @@ double mono_ms();
 void delay_ms(unsigned int ms);
 
 /* execute `fn(ctx)` until `timeout_ms` reached, each loop waiting for the
-   `interval`(ms) */
-enum wait_stat exec_until(unsigned int timeout_ms, unsigned int interval,
+   `interval`(ms), notice that `fn(ctx)` should return `WAIT_AGAIN` to loop
+   again until it reached the caller's expectation */
+enum wait_stat exec_fn_until(unsigned int timeout_ms, unsigned int interval,
                           callback fn, void *ctx);
 
 /* turn wait_stat to string literal */

@@ -1,9 +1,18 @@
-#include <fcntl.h>
-#include <time.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
+#ifdef PAM_USE_LOG_H
 #include "log.h"
+#define log_info_noh(...) log_info(__VA_ARGS__)
+#define log_warn_at(h, ...) log_warn(__VA_ARGS__)
+#else // notice that you should declare `pamh` before call them
+#include <syslog.h>
+#define log_debug(...) pam_syslog(pamh, LOG_DEBUG, __VA_ARGS__)
+#define log_info(...) pam_syslog(pamh, LOG_INFO, __VA_ARGS__)
+#define log_warn(...) pam_syslog(pamh, LOG_WARNING, __VA_ARGS__)
+#define log_error(...) pam_syslog(pamh, LOG_ERR, __VA_ARGS__)
+#endif
+
 #include "protocol.h"
 #include "waiter.h"
 #include <security/pam_ext.h>
@@ -16,15 +25,22 @@
 
 #define FINGER_MOD "/dev/FP_ZW111"
 #define DEFAULT_BAUDRATE (B57600)
-#define MAX_TIMEOUT (10.0f * 1000)
+#define MAX_TIMEOUT (10 * 1000U)
 #define FP_IDENTIFY_MAX_RETRY (5)
 #define FP_ERR_MAX_RETRY (5)
 
-static enum wait_stat pam_open_fp(void *ctx) {
-  int *fd = ctx;
-  enum wait_stat ret = WAIT_DONE;
-  *fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE);
+struct pam_dev_ctx {
+  int *fd;
+  pam_handle_t *pamh;
+};
 
+static enum wait_stat pam_open_dev(void *ctx) {
+  struct pam_dev_ctx *pCtx = ctx;
+  int *fd = pCtx->fd;
+  enum wait_stat ret = WAIT_DONE;
+  const pam_handle_t *pamh = pCtx->pamh;
+
+  *fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE);
   if (*fd >= 0) {
     log_info("device opened!");
     return ret;
@@ -32,6 +48,28 @@ static enum wait_stat pam_open_fp(void *ctx) {
   ret = (*fd == -2) ? WAIT_BLOCKED : WAIT_AGAIN;
 
   *fd = -1;
+  return ret;
+}
+
+static enum wait_stat pam_remove_finger(void *ctx) {
+  static bool warned = false;
+  enum wait_stat ret = WAIT_DONE;
+  struct pam_dev_ctx *pCtx = ctx;
+  const pam_handle_t *pamh = pCtx->pamh;
+
+  uint8_t dev_status = fp_get_image(*(pCtx->fd));
+  /* 如果检测有手指就提醒，其他情况均认为是函数返回失败 */
+  if (FP_IS_STATUS(dev_status, FP_OK)) {
+    ret = WAIT_AGAIN;
+    if (warned == false) {
+      log_warn("Please remove your finger");
+      pam_info(pCtx->pamh, "请先移开你的手指");
+      warned = true;
+    }
+  } else if (!FP_IS_STATUS(dev_status, FP_NO_FINGER)) {
+    ret = WAIT_FAIL;
+  }
+
   return ret;
 }
 
@@ -47,13 +85,15 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                                    const char **argv) {
   log_info("pam_sm_authenticate called with flags: 0x%02X, argc: %d", flags,
            argc);
+  (void)argv;
 
   int ret = PAM_SUCCESS;
   uint8_t status;
-  int fd;
+  int fd = -1;
   enum wait_stat wst;
+  struct pam_dev_ctx pCtx = {.fd = &fd, .pamh = pamh};
 
-  wst = exec_until(MAX_TIMEOUT, 1000, pam_open_fp, &fd);
+  wst = exec_fn_until(MAX_TIMEOUT, 1000, pam_open_dev, &pCtx);
   if (wst != WAIT_DONE) {
     log_error("can not open device %s (err: %s)", FINGER_MOD, wstatstr(wst));
     ret = PAM_AUTHINFO_UNAVAIL;
@@ -74,6 +114,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     delay_ms(500);
 
     switch (status) {
+    // 这种情况是设备/poll 超时，认为手指一直没放在上面，所以卡死
     case FP_TIMEOUT:
       log_warn("module identify timeout, retrying...");
       continue;
@@ -84,7 +125,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
       fp_close(fd);
 
-      wst = exec_until(MAX_TIMEOUT, 1000, pam_open_fp, &fd);
+      wst = exec_fn_until(MAX_TIMEOUT, 1000, pam_open_dev, &pCtx);
       if (wst != WAIT_DONE) {
         log_error("can not open device %s (err: %s)", FINGER_MOD,
                   wstatstr(wst));
@@ -103,13 +144,15 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
         ret = PAM_AUTH_ERR;
         goto cleanup;
       }
-      // 避免过快重新开始循环导致浪费一次识别机会
-      // delay_ms(300);
-      while (FP_IS_STATUS(fp_get_image(fd), FP_OK)) {
-        delay_ms(1000);
-        log_warn("Please remove your finger");
-        pam_info(pamh, "请先移开你的手指");
+
+      wst = exec_fn_until(MAX_TIMEOUT, 500, pam_remove_finger, &pCtx);
+      if (wst != WAIT_DONE) {
+        log_error("ask for removing finger failed (wstatstr: %s)",
+                  wstatstr(wst));
+        ret = PAM_AUTHINFO_UNAVAIL;
+        goto cleanup;
       }
+
       int times_left = FP_IDENTIFY_MAX_RETRY - identify_retry;
       // it'll show a QtWidget with the text
       pam_info(pamh, "你还有 %d 次重试机会", times_left);
@@ -139,7 +182,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   log_info("identified!");
 
 cleanup:
-  if (fd != -1) {
+  if (fd >= 0) {
     if (ret != PAM_SUCCESS) {
       fp_cancel(fd);
     }
@@ -154,6 +197,8 @@ PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
                               const char **argv) {
   // flags 返回 0x10 => PAM_REFRESH_CRED
   log_info("pam_sm_setcred called with flags: 0x%02X, argc: %d", flags, argc);
+  (void)pamh;
+  (void)argv;
 
   return PAM_IGNORE;
 }
@@ -161,6 +206,8 @@ PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
 PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
                                 const char **argv) {
   log_info("pam_sm_acct_mgmt called with flags: 0x%02X, argc: %d", flags, argc);
+  (void)pamh;
+  (void)argv;
 
   return PAM_IGNORE;
 }

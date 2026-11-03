@@ -24,10 +24,10 @@ void delay_ms(unsigned int ms) {
   }
 }
 
-enum wait_stat exec_until(unsigned int timeout_ms, unsigned int interval,
+enum wait_stat exec_fn_until(unsigned int timeout_ms, unsigned int interval,
                           callback fn, void *ctx) {
   enum wait_stat ret;
-  double maxtime = mono_ms() + (double)timeout_ms / 1000;
+  double maxtime = mono_ms() + (double)timeout_ms;
 
   while (1) {
     ret = fn(ctx);
