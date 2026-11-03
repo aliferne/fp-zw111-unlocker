@@ -102,7 +102,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   int err_retry = 0;
   int identify_retry = 0;
-  pam_info(pamh, "设备已连接");
+  pam_info(pamh, " ZW111 指纹模块已连接");
   log_info("please place your finger on the module");
 
   /* 此处表示以置信度 2 (较为常用) 的等级遍历所有指纹，只要找到符合的就返回
@@ -121,7 +121,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
     case FP_IO_ERR:
       log_warn("device is removed!");
-      pam_info(pamh, "设备已断开连接，尝试重连中...");
+      pam_info(pamh, " ZW111 指纹模块已断开连接，尝试重连中...");
 
       fp_close(fd);
 
@@ -134,7 +134,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       }
 
       log_info("device reconnected");
-      pam_info(pamh, "设备已连接");
+      pam_info(pamh, " ZW111 指纹模块已连接");
       continue;
 
       // tried to unlock by finger not enrolled
