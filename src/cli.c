@@ -71,10 +71,10 @@ static int run_command(int fd, enum cmd cmd, uint16_t id, uint8_t times,
 
   switch (cmd) {
   case CMD_ENROLL:
-    st = fp_auto_enroll(fd, id, times, true, false, true, false, false);
+    st = fp_auto_enroll(fd, id, times, true, false, true, false, false, 15000);
     break;
   case CMD_IDENTIFY:
-    st = fp_auto_identify(fd, 2, id, true, false);
+    st = fp_auto_identify(fd, 2, id, true, false, 15000);
     break;
   case CMD_GET_IMAGE:
     st = fp_get_image(fd);

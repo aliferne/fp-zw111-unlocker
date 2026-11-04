@@ -144,12 +144,17 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
  *  - require_remove: require remove finger to enter next enroll.
  *                    if this is set, you should remove and put your
  *                    finger again while enrolling the finger print
+ *  - timeout(ms): the timeout for waiting the response of device
+ *                notice that the TIMEOUT FRAME from the device is received
+ *                circa per 10s, of course you can pass a value over 10000,
+ *                but that usually means you would rather waiting for
+ *                the device to depend when should timeout.
  *
  * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
                        bool return_status, bool allow_overwrite,
-                       bool allow_duplicate, bool require_remove);
+                       bool allow_duplicate, bool require_remove, int timeout);
 
 /* auto identify finger print,
  * the module shines green light when success, red blinking light when failed.
@@ -167,11 +172,16 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
  *                   that means it'll return data at the key step in the
  *                   flowchart of the documentation, TURN OFF RECOMMENDED
  *                   (This function is not opened, it'll always be false)
+ *  - timeout(ms): the timeout for waiting the response of device
+ *                notice that the TIMEOUT FRAME from the device is received
+ *                circa per 10s, of course you can pass a value over 10000,
+ *                but that usually means you would rather waiting for
+ *                the device to depend when should timeout.
  *
  * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                         bool led_ctrl, bool return_status);
+                         bool led_ctrl, bool return_status, int timeout);
 
 // translate status_code into strings
 const char *fp_strcode(uint8_t c);

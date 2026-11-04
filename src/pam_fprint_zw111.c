@@ -3,8 +3,6 @@
 
 #ifdef PAM_USE_LOG_H
 #include "log.h"
-#define log_info_noh(...) log_info(__VA_ARGS__)
-#define log_warn_at(h, ...) log_warn(__VA_ARGS__)
 #else // notice that you should declare `pamh` before call them
 #include <syslog.h>
 #define log_debug(...) pam_syslog(pamh, LOG_DEBUG, __VA_ARGS__)
@@ -85,7 +83,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                                    const char **argv) {
   log_info("pam_sm_authenticate called with flags: 0x%02X, argc: %d", flags,
            argc);
-  (void)argv;
 
   int ret = PAM_SUCCESS;
   uint8_t status;
@@ -96,13 +93,16 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   wst = exec_fn_until(MAX_TIMEOUT, 1000, pam_open_dev, &pCtx);
   if (wst != WAIT_DONE) {
     log_error("can not open device %s (err: %s)", FINGER_MOD, wstatstr(wst));
+    pam_info(pamh, "无法连接设备");
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
 
   int err_retry = 0;
   int identify_retry = 0;
-  pam_info(pamh, " ZW111 指纹模块已连接");
+  int resp_max_retry = 0;
+
+  pam_info(pamh, "指纹模块已连接，可以指纹识别");
   log_info("please place your finger on the module");
 
   /* 此处表示以置信度 2 (较为常用) 的等级遍历所有指纹，只要找到符合的就返回
@@ -110,18 +110,24 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
      上任何一个用户，这当然是不安全的，
      但我的场景只是自用，因此不考虑这些安全问题。
      毕竟如果真要安全的话就不会选择自己 DIY 了(doge) */
-  while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false)) != FP_OK) {
-    delay_ms(500);
+  while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false, 15000)) !=
+         FP_OK) {
+    delay_ms(100);
 
     switch (status) {
-    // 这种情况是设备/poll 超时，认为手指一直没放在上面，所以卡死
+    // 这种情况是设备/poll 超时
     case FP_TIMEOUT:
-      log_warn("module identify timeout, retrying...");
+      log_warn("identify timeout, retrying...");
+      if (++resp_max_retry >= 3) { // wait for circa 20s
+        log_error("max retry for timeout exceeded!");
+        ret = PAM_AUTH_ERR;
+        goto cleanup;
+      }
       continue;
 
     case FP_IO_ERR:
       log_warn("device is removed!");
-      pam_info(pamh, " ZW111 指纹模块已断开连接，尝试重连中...");
+      pam_info(pamh, "指纹模块已断开连接，尝试重连中...");
 
       fp_close(fd);
 
@@ -129,12 +135,13 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       if (wst != WAIT_DONE) {
         log_error("can not open device %s (err: %s)", FINGER_MOD,
                   wstatstr(wst));
+        pam_info(pamh, "重连失败");
         ret = PAM_AUTHINFO_UNAVAIL;
         goto cleanup;
       }
 
       log_info("device reconnected");
-      pam_info(pamh, " ZW111 指纹模块已连接");
+      pam_info(pamh, "指纹模块已连接，可以指纹识别");
       continue;
 
       // tried to unlock by finger not enrolled

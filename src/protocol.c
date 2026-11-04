@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define FP_PACK_START (0xEF01)
@@ -33,7 +34,7 @@
 #define RECV_TIMEOUT_SEC 1
 #define RECV_BUF_SIZE 64
 #define SEND_BUF_SIZE (FP_GET_PACK_SIZE(0xFF))
-#define DEFAULT_TIMEOUT (1.5f)
+#define DEFAULT_TIMEOUT (1500)
 
 /* the buffer length of fp_pack to send (pack_len already includes checksum) */
 #define FP_GET_PACK_SIZE(pack_len) (FP_PACKHEADER_SIZE + (pack_len))
@@ -164,9 +165,9 @@ static uint8_t fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
   return FP_OK;
 }
 
-/* nbr: number of bytes read */
+/* nbr: number of bytes read, timeout(ms) */
 static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
-                            float timeout) {
+                            int timeout) {
   size_t got = 0;
   size_t want = FP_PACKHEADER_SIZE;
   struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLPRI};
@@ -178,7 +179,7 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
      useless
      the key point to write blog, how to parse a frame */
   while (got < want) {
-    int ready = poll(&pfd, 1, timeout * 1000);
+    int ready = poll(&pfd, 1, timeout);
     if (ready < 0) {
       if (errno == EINTR)
         continue;
@@ -227,10 +228,10 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
 
 /* run one command/response transaction. On success sets *dev_status to the
  * device confirm code and returns FP_OK; on local failure returns a negative
- * uint8_t. */
+ * uint8_t. timeout(ms) */
 static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
                            size_t send_len, uint8_t *recv, size_t recv_len,
-                           float timeout, const char *fail_msg) {
+                           int timeout, const char *fail_msg) {
   int nbr = 0;
   uint8_t st;
 
@@ -349,7 +350,7 @@ uint8_t fp_reset_settings(int fd) {
 
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
                        bool return_status, bool allow_overwrite,
-                       bool allow_duplicate, bool require_remove) {
+                       bool allow_duplicate, bool require_remove, int timeout) {
   // TODO: max id limit if (id >)
   /* theoretically enrolling time can be larger than 5(max to 255),
      but better not */
@@ -369,12 +370,12 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, timeout,
                      "enroll failed");
 }
 
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                         bool led_ctrl, bool return_status) {
+                         bool led_ctrl, bool return_status, int timeout) {
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
   uint16_t param = ((!return_status) << 2 | led_ctrl << 0);
@@ -385,7 +386,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
   /* 模块的 timeout 大概在 11s 左右 */
-  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, 15,
+  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, timeout,
                      "auto identify failed");
 }
 

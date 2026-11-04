@@ -12,16 +12,17 @@ enum wait_stat {
 typedef enum wait_stat (*callback)(void *ctx);
 
 /* get monotic ms */
-double mono_ms();
+long mono_ms();
 
 /* delay for ms */
 void delay_ms(unsigned int ms);
 
 /* execute `fn(ctx)` until `timeout_ms` reached, each loop waiting for the
    `interval`(ms), notice that `fn(ctx)` should return `WAIT_AGAIN` to loop
-   again until it reached the caller's expectation */
-enum wait_stat exec_fn_until(unsigned int timeout_ms, unsigned int interval,
-                          callback fn, void *ctx);
+   again until it reached the caller's expectation, if `timeout_ms == 0`,
+   it'll wait until `fn(ctx)` returns `WAIT_DONE` */
+enum wait_stat exec_fn_until(long timeout_ms, unsigned int interval,
+                             callback fn, void *ctx);
 
 /* turn wait_stat to string literal */
 const char *wstatstr(enum wait_stat wstat);

@@ -3,12 +3,12 @@
 #include <time.h>
 #include <unistd.h>
 
-double mono_ms() {
+long mono_ms() {
   struct timespec now;
   if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
     return 0;
 
-  return (double)(now.tv_sec) * 1E3 + (double)(now.tv_nsec) / 1E6;
+  return (now.tv_sec) * 1000 + (now.tv_nsec) / 1E6;
 }
 
 void delay_ms(unsigned int ms) {
@@ -24,10 +24,10 @@ void delay_ms(unsigned int ms) {
   }
 }
 
-enum wait_stat exec_fn_until(unsigned int timeout_ms, unsigned int interval,
-                          callback fn, void *ctx) {
+enum wait_stat exec_fn_until(long timeout_ms, unsigned int interval,
+                             callback fn, void *ctx) {
   enum wait_stat ret;
-  double maxtime = mono_ms() + (double)timeout_ms;
+  long maxtime = mono_ms() + timeout_ms;
 
   while (1) {
     ret = fn(ctx);
@@ -35,7 +35,7 @@ enum wait_stat exec_fn_until(unsigned int timeout_ms, unsigned int interval,
       return ret;
 
     delay_ms(interval);
-    if (mono_ms() > maxtime)
+    if (timeout_ms != 0 && mono_ms() > maxtime)
       return WAIT_TIMEOUT;
   }
 }

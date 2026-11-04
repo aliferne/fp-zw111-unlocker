@@ -25,10 +25,10 @@ CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
-DEFFLAGS += -DLOG_USE_COLOR
+DEFFLAGS += -DLOG_USE_COLOR \
+	-DPAM_USE_LOG_H
 	# -DPROTOCOL_USE_LOG
 	# -DSERIAL_DEBUG_ON
-	# -DPAM_USE_LOG_H
 
 .PHONY: all run pam clean
 
