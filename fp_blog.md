@@ -6,9 +6,29 @@
   2. Linux PAM 模块介绍与 PAM 动态库开发
   3. 为 ZW111 打通 “任督 PAM 脉”
 
+上半部分直接展示最终成果，少量的迭代过程的思考，下半部分则讲一下和 AI 结合的开发过程，以及对整体架构的把控之类的
+
+# 前言
+
+这个项目有点个人小玩具的色彩（笑），我的电脑是天选 5 Pro, 没有指纹识别模块，而我自己又主要用 Debian, 当时是和朋友去福州旅游，在闽都 THO 晚上的小型演唱会现场听 DJ 打碟感到无聊，然后思绪就开始发散，**想着说每次解锁电脑都要输入密码，实在是太麻烦了，因此想搞个指纹模块来玩**，于是就有了这篇博客。当然可能有人会觉得我闲得慌，也确实是闲得慌，我要是不折腾，你们看什么啊？ ~~是啊，看什么?~~
+
+注意上面的需求，因为这个需求后面给我扩展了一下，也导致了一些架构上的调整，我会在第二篇文章讲述自己的 “解题思路” 和踩的一些坑。
+
+指纹模块相关代码已经[开源][项目开源链接]， 主要逻辑部分基本完全古法编程，而审(zhao)查(cha)工作主要由 DeepSeek V4.1 Flash 负责，**这篇博客也是纯手敲**。
+
+这个需求我个人感觉挺简单的，其实可以直接让 v4.1 vibe 一个出来，但是我是当 recreational programming 来玩的 (幻视 tsoding)，所以没有完全 AI 开发，但却没想到这玩意写了我快一个月……（虽然我每天只有大约两三个小时投入开发就是了）。
+
+这里需要提一嘴，我是 Linux 系统编程的初学者，如下文有误，还请不吝赐教。
+
 # ZW111 模块开发
 
-TODO:
+因此一开始是硬件的调研，我想知道有什么指纹模组可以给我开发，于是问了 deepseek 之后决定搞个 ZW111 模块来玩，这玩意加上一个 USB 转 TTL 也就 30 块，市面上的 Windows Hello 模组大概是四五十到一百都有。
+
+然后拿到数据手册，脑子里面便大概有了一些开发的方向，我个人角度上认为这一部分主要有 4 个递进的任务： Linux 串口配置(`termios.h`) -> Linux 串口通信(`fcntl.h` 等) -> 实现数据手册规定协议 -> 测试功能
+
+写串口配置实际上是一个比较无聊的过程，因此我是直接抄的 《嵌入式 Linux 开发教程》 里面的代码，这部分就没什么好说的了。
+
+
 
 # PAM 模块
 
@@ -349,17 +369,25 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 
 NOTE: 两个视频的录像都有问题，重录
 
-![fp-zw111-test-without-flock](./images/fp-zw111-test-without-flock.mp4)
+![fp-zw111-test-without-lock](./images/fp-zw111-test-without-lock.webm)
 
 ---
 
 带锁的，进程之间先到先得，符合互斥锁的现象：
 
-![fp-zw111-test-with-flock](./images/fp-zw111-test-with-flock.mp4)
+![fp-zw111-test-with-lock](./images/fp-zw111-test-with-lock.webm)
 
-PAT: 我们能不能直接在 fcntl 层面上上锁？不需要 flock
-     此外发现 lockf, 基于 fcntl 的封装
-NOTE: 思路可行，晚点补充/修改博客内容
+不上锁时需要修改的代码
+
+```
+  if (lockf(fd, F_TLOCK, 0) == -1) {
+    if (errno == EACCES || errno == EAGAIN) {
+      log_error("file: %s (fd: %d) locked!", devname, fd);
+    }
+    // fp_close(fd);
+    // return -2;
+  }
+```
 
 ```bash
 > sudo adduser "testusr"
@@ -380,6 +408,10 @@ recv:         EF 01 FF FF FF FF 07 00 08 00 05 00 01 04 A9 00 C2
 17:27:48 INFO  src/pam_fprint_zw111.c:161: identified!
 pamtester: successfully authenticated
 ```
+
+---
+
+[项目开源链接]: https://github.com/aliferne/fp-zw111-unlocker
 
 # 参考资料（TODO: 还需要从 README 中补充一些过来）
 
