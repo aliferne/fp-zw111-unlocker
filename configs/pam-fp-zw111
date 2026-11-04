@@ -1,0 +1,22 @@
+# `sufficient` 表示如果验证通过了，就不会再执行后面的验证操作
+# 注意，这可能不太安全。
+#
+# 由于 sudo 这种验证程序：
+#
+# ```
+# @include common-auth
+# @include common-account
+# @include common-session-noninteractive
+# ```
+#
+# 这几个文件都要求的是输入密码，并且是 `required` 控制的，
+# 如果我想要绕过密码验证，直接指纹，就必须要用 `sufficient`
+# 那么我是在这几个文件上面加上
+# `@include pam-fp-zw111`
+# 来绕过的。
+#
+# 如果指纹验证失败就会自动 fallback 到密码验证上，
+# 因此不需要担心进不了 sudo
+# 不过需要注意的是，如果第一次验证没通过，
+# 那么第二次会接着先调用指纹验证模块，这点是比较麻烦的
+auth sufficient pam_fprint_zw111.so
