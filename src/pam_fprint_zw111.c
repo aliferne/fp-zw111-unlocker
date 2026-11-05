@@ -1,3 +1,4 @@
+#include <security/_pam_types.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
@@ -17,6 +18,8 @@
 #include <security/pam_modules.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/file.h>
 #include <termios.h>
 #include <unistd.h>
@@ -32,7 +35,7 @@ struct pam_dev_ctx {
   pam_handle_t *pamh;
 };
 
-static enum wait_stat pam_open_dev(void *ctx) {
+static enum wait_stat _open_dev(void *ctx) {
   struct pam_dev_ctx *pCtx = ctx;
   int *fd = pCtx->fd;
   enum wait_stat ret = WAIT_DONE;
@@ -71,6 +74,67 @@ static enum wait_stat pam_remove_finger(void *ctx) {
   return ret;
 }
 
+static bool pam_connect_dev(pam_handle_t *pamh, struct pam_dev_ctx *pCtx,
+                            bool is_reconnect) {
+  enum wait_stat wst;
+  if (is_reconnect)
+    fp_close(*(pCtx->fd));
+
+  wst = exec_fn_until(MAX_TIMEOUT, 1000, _open_dev, pCtx);
+
+  if (wst != WAIT_DONE) {
+    log_error("can not open device %s (err: %s)", FINGER_MOD, wstatstr(wst));
+    pam_info(pamh, "无法连接设备");
+    return false;
+  }
+  return true;
+}
+
+struct kv_pair {
+  const char *key;
+  long value;
+};
+
+/* 一个极简的 argparser，只支持 `key=value` 的形式，
+   当解析出的 key 等于 kvp->key 时返回 true */
+static bool pam_parse_arg(const char *argv, struct kv_pair *kvp) {
+  void *pamh = NULL;
+  char *eq = strchr(argv, '=');
+
+  if (kvp == NULL)
+    return false;
+
+  // `=` not found or only `=` exists or no value
+  if (eq == NULL || eq == argv || eq[1] == '\0') {
+    log_error("invalid kv_pair: %s", argv);
+    return false;
+  }
+
+  unsigned long klen = (unsigned long)(eq - argv);
+  const char *vstart = eq + 1;
+  char *end = NULL;
+
+  long v = strtol(vstart, &end, 0);
+  bool matched = strlen(kvp->key) == klen && strncmp(argv, kvp->key, klen) == 0;
+
+  kvp->value = (end != NULL && matched) ? v : 0;
+
+  return matched;
+}
+
+static void pam_parse_args(pam_handle_t *pamh, int argc, const char *argv[],
+                           struct kv_pair *pairs) {
+  struct kv_pair *pair;
+  for (int i = 0; i < argc; i++) {
+    pair = &pairs[i];
+    if (pair->key == 0 && pair->value == 0)
+      break;
+
+    log_debug("key %s with value %zu is_matched: %d", pair->key, pair->value,
+              pam_parse_arg(argv[i], pair));
+  }
+}
+
 /*
  * FIXME: 指纹解锁成功后快速锁上，在一段窗口期内会再次解锁，即便没有做指纹验证
  *        窗口期大约从解锁成功后开始到绿灯熄灭后的 1s
@@ -84,16 +148,25 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   log_info("pam_sm_authenticate called with flags: 0x%02X, argc: %d", flags,
            argc);
 
+  /*  parsing args ---------------------- */
+  struct kv_pair pairs[] = {{.key = "resp_block", .value = 0},
+                            {.key = "resp_timeout", .value = MAX_TIMEOUT},
+                            {.key = "resp_maxretry", .value = 3},
+                            {0, 0}};
+  // 一定要使用指针，不然会复制初始值，导致解析出来的结果不生效
+  struct kv_pair *resp_block = &pairs[0];
+  struct kv_pair *resp_timeout = &pairs[1];
+  struct kv_pair *resp_maxretry = &pairs[2];
+  pam_parse_args(pamh, argc, argv, pairs);
+  /*  end parsing args ---------------------- */
+
   int ret = PAM_SUCCESS;
   uint8_t status;
   int fd = -1;
   enum wait_stat wst;
   struct pam_dev_ctx pCtx = {.fd = &fd, .pamh = pamh};
 
-  wst = exec_fn_until(MAX_TIMEOUT, 1000, pam_open_dev, &pCtx);
-  if (wst != WAIT_DONE) {
-    log_error("can not open device %s (err: %s)", FINGER_MOD, wstatstr(wst));
-    pam_info(pamh, "无法连接设备");
+  if (pam_connect_dev(pamh, &pCtx, false) == false) {
     ret = PAM_AUTHINFO_UNAVAIL;
     goto cleanup;
   }
@@ -110,15 +183,17 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
      上任何一个用户，这当然是不安全的，
      但我的场景只是自用，因此不考虑这些安全问题。
      毕竟如果真要安全的话就不会选择自己 DIY 了(doge) */
-  while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false, 15000)) !=
-         FP_OK) {
+  while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false,
+                                    resp_timeout->value)) != FP_OK) {
     delay_ms(100);
 
     switch (status) {
     // 这种情况是设备/poll 超时
     case FP_TIMEOUT:
       log_warn("identify timeout, retrying...");
-      if (++resp_max_retry >= 3) { // wait for circa 20s
+
+      if ((resp_block->value == 0) &&
+          (++resp_max_retry >= resp_maxretry->value)) {
         log_error("max retry for timeout exceeded!");
         ret = PAM_AUTH_ERR;
         goto cleanup;
@@ -128,18 +203,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     case FP_IO_ERR:
       log_warn("device is removed!");
       pam_info(pamh, "指纹模块已断开连接，尝试重连中...");
-
-      fp_close(fd);
-
-      wst = exec_fn_until(MAX_TIMEOUT, 1000, pam_open_dev, &pCtx);
-      if (wst != WAIT_DONE) {
-        log_error("can not open device %s (err: %s)", FINGER_MOD,
-                  wstatstr(wst));
-        pam_info(pamh, "重连失败");
+      if (pam_connect_dev(pamh, &pCtx, true) == false) {
         ret = PAM_AUTHINFO_UNAVAIL;
         goto cleanup;
       }
-
       log_info("device reconnected");
       pam_info(pamh, "指纹模块已连接，可以指纹识别");
       continue;
@@ -204,7 +271,6 @@ PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
                               const char **argv) {
   // flags 返回 0x10 => PAM_REFRESH_CRED
   log_info("pam_sm_setcred called with flags: 0x%02X, argc: %d", flags, argc);
-  (void)pamh;
   (void)argv;
 
   return PAM_IGNORE;
@@ -213,7 +279,6 @@ PAM_EXTERN int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc,
 PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
                                 const char **argv) {
   log_info("pam_sm_acct_mgmt called with flags: 0x%02X, argc: %d", flags, argc);
-  (void)pamh;
   (void)argv;
 
   return PAM_IGNORE;

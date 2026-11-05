@@ -5,13 +5,12 @@ INC_DIR := inc
 BUILD_DIR := build
 
 # 入口与 PAM 模块源文件
-MAIN_SRC := $(SRC_DIR)/main.c
 PAM_SRC := $(SRC_DIR)/pam_fprint_zw111.c
-CLI_SRCS := $(SRC_DIR)/cli.c
+CLI_SRC := $(SRC_DIR)/cli.c
 HEADERS := $(wildcard $(INC_DIR)/*.h)
 
 # 公共核心源码（协议、串口、日志等，主程序与 PAM 模块共用）
-CORE_SRCS := $(filter-out $(MAIN_SRC) $(CLI_SRC) $(PAM_SRC), $(wildcard $(SRC_DIR)/*.c))
+CORE_SRCS := $(filter-out $(CLI_SRC) $(PAM_SRC), $(wildcard $(SRC_DIR)/*.c))
 # 主程序源码：核心源码 + main.c，不包含 PAM 模块
 APP_SRCS := $(CORE_SRCS) $(MAIN_SRC)
 
@@ -35,9 +34,6 @@ DEFFLAGS += -DLOG_USE_COLOR \
 # all: $(MAIN_TARGET) $(PAM_TARGET) $(CLI_TARGET)
 all: $(PAM_TARGET) $(CLI_TARGET)
 
-run_main: $(MAIN_TARGET)
-	@./$(MAIN_TARGET)
-
 ARGS := -h
 run_cli: $(CLI_TARGET)
 	@./$(CLI_TARGET) $(ARGS)
@@ -49,11 +45,6 @@ cli: $(CLI_TARGET)
 # 清理目标文件和可执行文件
 clean:
 	rm -rf $(BUILD_DIR)
-
-$(MAIN_TARGET): $(APP_SRCS)
-	@echo "===================== building main target ====================="
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCFLAGS) $(DEFFLAGS) $^ -o $@
 
 # 生成 PAM 共享库
 $(PAM_TARGET): $(PAM_SRC) $(CORE_SRCS)

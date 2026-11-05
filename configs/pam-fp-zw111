@@ -1,3 +1,4 @@
+# 这里是一些示例
 # `sufficient` 表示如果验证通过了，就不会再执行后面的验证操作
 # 注意，这可能不太安全。
 #
@@ -14,9 +15,18 @@
 # 那么我是在这几个文件上面加上
 # `@include pam-fp-zw111`
 # 来绕过的。
+# 这之后就千万不要手贱重命名 `pam-fp-zw111` 这个文件了
+# 不然就会遇到 [图片](../images/sudo-pam-file-not-found.png) 的情况
 #
 # 如果指纹验证失败就会自动 fallback 到密码验证上，
 # 因此不需要担心进不了 sudo
 # 不过需要注意的是，如果第一次验证没通过，
 # 那么第二次会接着先调用指纹验证模块，这点是比较麻烦的
-auth sufficient pam_fprint_zw111.so
+
+# 参数说明(注意参数顺序是固定的，不要改动，但参数可以缺项，此时使用代码内默认值)
+# resp_block: 响应超时是否阻塞整个 PAM 验证过程(如果超时则一直超时，不退出)
+# resp_timeout: 每次响应的超时时长(最大是 10000ms，超过的话就取决于设备超时帧)
+# resp_maxretry: 响应的最大尝试次数
+#                 当 `resp_block = 0` 时，若超时，最多尝试 `resp_maxretry` 次
+#                 之后直接认为验证失败
+auth sufficient pam_fprint_zw111.so resp_block=0 resp_timeout=10000 resp_maxretry=3
