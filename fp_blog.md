@@ -12,13 +12,26 @@
 
 这个项目有点个人小玩具的色彩（笑），我的电脑是天选 5 Pro, 没有指纹识别模块，而我自己又主要用 Debian, 当时是和朋友去福州旅游，在闽都 THO 晚上的小型演唱会现场听 DJ 打碟感到无聊，然后思绪就开始发散，**想着说每次解锁电脑都要输入密码，实在是太麻烦了，因此想搞个指纹模块来玩**，于是就有了这篇博客。当然可能有人会觉得我闲得慌，也确实是闲得慌，我要是不折腾，你们看什么啊？ ~~是啊，看什么?~~
 
-注意上面的需求，因为这个需求后面给我扩展了一下，也导致了一些架构上的调整，我会在第二篇文章讲述自己的 “解题思路” 和踩的一些坑，同时我也想在第二篇讲讲我自己对 AI Coding 的一些想法。
+注意上面的需求，因为这个需求后面给我扩展了一下，变成了接入任意 PAM 服务，也导致了一些架构上的调整，我会在第二篇文章讲述自己的 “解题思路” 和踩的一些坑，同时我也想在第二篇讲讲我自己对 AI Coding 的一些想法。
 
 指纹模块相关代码已经[开源][项目开源链接]， 主要逻辑部分基本完全古法编程，而审(zhao)查(cha)工作主要由 DeepSeek V4.1 Flash 负责，**这篇博客也是纯手敲**。
 
 这个需求我个人感觉挺简单的，其实可以直接让 v4.1 vibe 一个出来，但是我是当 recreational programming 来玩的 (幻视 tsoding)，所以没有完全 AI 开发，但却没想到这玩意写了我快一个月……（虽然我每天只有大约两三个小时投入开发就是了）。
 
 这里需要提一嘴，我是 Linux 系统编程的初学者，如下文有误，还请不吝赐教。
+
+# 项目架构
+
+我们需要了解一下整个任务涉及到的部分：
+
+Linux 串口配置 -> 与 ZW111 的通信 -> 开发属于 ZW111 的 PAM 模块 -> 配置关键文件，使 libpam 能够与自己的 PAM 模块交互
+
+涉及到 KDE 的部分: kscreenlocker
+
+PAM 模块借助 conv_func 机制 -> 讲解如何编写 PAM Application
+编辑 KDE 的 QML 文件 -> kscreenlocker 源码， Qt 的 Signal 机制，`Q_EMIT`，观察 `conv_func` -> 修改 QML 对应部分
+
+TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
 
 # ZW111 模块开发
 
@@ -28,7 +41,14 @@
 
 写串口配置实际上是一个比较无聊的过程，因此我是直接抄的 《嵌入式 Linux 开发教程》 里面的代码，这部分就没什么好说的了。
 
-之后是
+串口配置：需要讲一下 vtime/vmin
+
+串口通信:
+- 串口设备文件 IO 需要考虑多进程？ => 互斥锁 (lockf)
+- 设备插拔断联导致的异常应当怎么处理？
+- 读需要读超时？ => 设备超时帧/代码设定的超时时间
+- 写？ => 一次性写入/分大小写？
+- 读？ => 一次性读完/分大小读？
 
 # PAM 模块
 
@@ -59,33 +79,14 @@ PAM 配置文件有一定的语法规则，由于配置文件的相关资料很�
 sudo apt install libpam-dev -y
 ```
 
-编写 [pam_auth_test.c](./pam_auth_test.c) 文件，
-注意一下实际用的时候不建议直接明文将密码等放进去，调 gdb 或者 ltrace 很容易就能破解出来：
+编写 [pam_auth_test.c](./test/pam-test/pam_auth_test.c) 文件，我们这里只作为测试用，需要注意永远不要明文将密钥写入代码中，比如下面用 ltrace 去看的：
 
 ```bash
 > ltrace -e strcmp ./test_pam pam-auth-test ss ss 2>&1 | grep "pam_auth_test.so"
 pam_auth_test.so->strcmp("ss", "test", 4)       = -1
 ```
 
-然后一眼就知道密码是什么了，再不济用：
-
-```bash
-> readelf -p .rodata pam_auth_test.so
-
-String dump of section '.rodata':
-  [     0]  [pam_testauth] pam_sm_authenticate called\n
-  [    2b]  Username:
-  [    38]  [pam_testauth] pam_get_user failed: %d\n
-  [    60]  Password:
-  [    70]  [pam_testauth] pam_get_authtok failed: %d\n
-  [    a0]  [pam_testauth] got user='%s' pass='%s'\n
-  [    c8]  testusr
-  [    d0]  testpwd
-  [    d8]  [pam_testauth] MATCH -> PAM_SUCCESS\n
-  [   100]  [pam_testauth] MISMATCH -> PAM_AUTH_ERR\n
-```
-
-或者反汇编啥的，硬猜也能猜出点东西出来
+然后一眼就知道密码是什么了
 
 然后编译，注意需要编译成共享库：
 
@@ -94,6 +95,8 @@ gcc -fPIC -shared -o pam_auth_test.so pam_auth_test.c
 ```
 
 TODO: 需要审查 fPIC 的讲解
+
+PIC: Position Independent Code
 
 fPIC 标志表示需要生成位置无关的代码，因为我们要编译出来的是共享库（即动态链接库），因此自然不可以是位置有关的，如果位置有关，那么这个库就会对外部编译产物有地址位置上的要求，这违背了共享和动态链接的要求 —— 加载一份共享库，所有依赖该库的都能直接调用，不需要将其复制到可执行文件上，更详细的可以去看其他大佬的介绍或者看 CSAPP 第七章关于链接的介绍。
 
@@ -104,7 +107,7 @@ fPIC 标志表示需要生成位置无关的代码，因为我们要编译出来
 sudo ln $(pwd)/pam_auth_test.so /lib/x86_64-linux-gnu/security
 ```
 
-注意链接最好用硬链接，只要你的盘在同一个文件系统内就行，硬链接的好处在于两个文件都指向了同一 inode 且修改任何一个文件的内容，其他文件都会跟着更新，删除任意文件都不会导致已有的文件失效，除非全删光。
+我个人认为链接最好用硬链接，只要你的盘在同一个文件系统内就行，硬链接的好处在于两个文件都指向了同一 inode 且修改任何一个文件的内容，其他文件都会跟着更新，删除任意文件都不会导致已有的文件失效，除非全删光。
 
 然后编写服务文件
 
@@ -122,7 +125,7 @@ EOF
 sudo ln $(pwd)/pam-auth-test /etc/pam.d
 ```
 
-这样子通路就基本搭建完毕了，我们接下来自己写一个 [应用程序](./pam_auth_test.c)，这里是有用的，我们不只要写验证模块，还要看应用模块的代码，到了下文就知道了，这里先卖个关子。
+这样子通路就基本搭建完毕了，然后我们接下来自己写一个 [应用程序](./pam_auth_test.c)
 
 然后编译：
 
@@ -142,7 +145,13 @@ gcc -o pam_auth_test.c test_pam -lpam
 pam_authenticate -> 0 (Success)
 ```
 
-当然也可以用 `pamtester` 去测试：
+但是我们测试还是会用更加成熟的 `pamtester`，首先安装它
+
+```bash
+> sudo apt install pamtester -y
+```
+
+然后我们来演示下这个工具的用法：
 
 ```bash
 > pamtester -v pam-auth-test testusr authenticate
@@ -155,22 +164,22 @@ Password:
 pamtester: successfully authenticated
 ```
 
-PAM 模块学习草稿基本写这么简单就行，后面写博客再扩充
+PAM 模块的编写教程到这里就结束了
 
 ## PAM 和 KDE 的联动
 
 我的桌面环境是 KDE Plasma 6：
 
 ```bash
-> fastfetch | grep "DE:" # 不要在意左半部分， fastfetch 会画 ASCII 图的
- Y$$.    `.`"Y$$$$P"'          DE: KDE Plasma 6.3.6
+> plasmashell --version
+plasmashell 6.3.6
 ```
 
 KDE 本身自带一个锁屏登录模块，而刚开机时则一般由 SDDM 或者其他的 Display Manager 接管，这里不详细讨论这个问题，只要知道它是独立于 Desktop Environment 的一个应用，用于在 shell 日志滚完之后接管其显示，启动顺序是 shell -> DM -> DE， KDE 一般和 SDDM 搭配使用，在 SDDM 验证身份之后，由 KDE 接替接下来的显示工作（占用一个新的 tty），并且之后也是 KDE 来负责会话的管理（锁屏，解锁，切换用户等）
 
 KDE 和 SDDM 各自会占用一个 tty， SDDM 在验证通过之后你再切过去 (ctrl + alt + fx, x 是多少自己试一下就知道了) 会发现是卡死的，不过这点对于我们接下来要做的事来说不重要。
 
-首先还是老规矩，简单编写一个[模块](./pam_kde_auth_test.c)并链接过去，然后测试一下
+首先还是老规矩，简单编写一个[模块](./test/pam-test/pam_kde_auth_test.c)并链接过去，然后测试一下
 
 ```bash
 # 这里测完之后记得删掉
@@ -214,7 +223,12 @@ Password: ^C
 ```
 
 然后还原在 `/usr/lib/pam.d/kde-fingerprint` ，再打开刚复制过去的文件，把上面自己写的那个配置项的 `<flag>` 从 required 改成 sufficient，然后你锁屏后再打开，就会发现不需要输入密码了。
+
+TODO:
+![][]
+
 接下来我会建议注释原来的 `pam_fprintd.so` 选项，改用自己自定义的 `.so` 作为指纹模块：
+TODO: 这里是否可以借鉴： `auth    required        pam_succeed_if.so user != root quiet_success` 的编辑思路来实现两个文件其中一个参与？
 
 ```plain text
 #auth	  required	      pam_fprintd.so
@@ -335,6 +349,16 @@ qml 之间似乎通过一些规约互相引用，需要了解一下
 这里应该只会改动 `MainBlock.qml`
 
 由于是声明式的，所以只需要把组件声明之后放在那里就行，显示顺序取决于声明顺序
+
+然后我们执行如下步骤：
+
+```bash
+> mkdir -p ~/.local/share/plasma/shells/org.kde.plasma.desktop/ && cp -r /usr/share/plasma/shells/org.kde.plasma.desktop/ ~/.local/share/plasma/shells/
+
+> ln -f /home/ferne/code/self-proj/fingerprint/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml ~/.local/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml
+```
+
+然后锁屏界面就会替换成你自己自定义的
 
 ---
 comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情考虑是否加入博客中
