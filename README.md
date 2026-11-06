@@ -9,6 +9,8 @@ Basically we can use library `pyfingerprint` to make MVP
 Blogs:
 
 - termios: https://www.man7.org/linux/man-pages/man3/termios.3.html
+- termios-api: https://man7.org/linux/man-pages/man7/termios.7.html
+- ioctl_tty(basically for it's unportable notification): https://man7.org/linux/man-pages/man2/ioctl_tty.2.html
 - Linux 串口编程: https://www.cnblogs.com/wybliw/p/11407281.html
 - PAM 模块学习总结: https://zhuanlan.zhihu.com/p/663757925
 - C 语言变长结构体: https://www.cnblogs.com/liuxiaomeng/p/8377308.html
@@ -28,6 +30,6 @@ Opensource Projects:
 
 Books:
 
-- 《Linux 系统编程》 Chapter 1, 2, 11
-- 《Linux/Unix 系统编程手册》 Chapter 23, 55, 附录 B —— 解析命令行选项
+- 《Linux 系统编程》 Chapter 1, 2, 8.6, 11
+- 《Linux/Unix 系统编程手册》 Chapter 3, 4, 23, 55, 附录 B —— 解析命令行选项
 - 《嵌入式 Linux 开发教程》（上） Chapter 16

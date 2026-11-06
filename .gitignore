@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# vscode related
+.vscode
+
 # zed related
 .zed
 

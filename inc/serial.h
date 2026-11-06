@@ -2,11 +2,13 @@
 #define SERIAL_H
 
 #include <termios.h>
+#include <stdbool.h>
 
 enum stopbit { STOPBIT_1, STOPBIT_15, STOPBIT_2 };
 enum databit { DATABIT_5, DATABIT_6, DATABIT_7, DATABIT_8 };
 enum parity { PARITY_NON, PARITY_EVEN, PARITY_ODD };
 
+bool serial_is_dev_hangup(int fd);
 int serial_set_attr(int fd, unsigned int baudrate, enum databit db,
                     enum stopbit sb, enum parity p, int vtime, int vmin);
 

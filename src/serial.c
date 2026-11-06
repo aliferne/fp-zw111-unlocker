@@ -1,4 +1,6 @@
 #include "serial.h"
+#include <errno.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 
 #ifdef SERIAL_DEBUG_ON
@@ -53,9 +55,14 @@ static void serial_set_parity(struct termios *opt, enum parity p) {
       (p == PARITY_EVEN) ? opt->c_cflag & ~PARODD : opt->c_cflag | ~PARODD;
 }
 
+static struct termios opt;
+
+bool serial_is_dev_hangup(int fd) {
+  return (tcgetattr(fd, &opt) == -1) && (errno == EIO);
+}
+
 int serial_set_attr(int fd, unsigned int baudrate, enum databit db,
                     enum stopbit sb, enum parity p, int vtime, int vmin) {
-  struct termios opt;
 
   tcgetattr(fd, &opt);
 
