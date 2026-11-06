@@ -5,9 +5,11 @@
 
 #ifdef SERIAL_DEBUG_ON
 #include "log.h"
-#define SERIAL_LOG(...) log_debug(__VA_ARGS__)
 #else
-#define SERIAL_LOG(...)
+#define log_debug(...)
+#define log_info(...)
+#define log_error(...)
+#define log_warn(...)
 #endif
 
 static void serial_set_baudrate(struct termios *opt, unsigned int baudrate) {
@@ -52,26 +54,30 @@ static void serial_set_parity(struct termios *opt, enum parity p) {
 
   opt->c_cflag |= PARENB;
   opt->c_cflag =
-      (p == PARITY_EVEN) ? opt->c_cflag & ~PARODD : opt->c_cflag | ~PARODD;
+      (p == PARITY_EVEN) ? opt->c_cflag & ~PARODD : opt->c_cflag | PARODD;
 }
 
-static struct termios opt;
-
 bool serial_is_dev_hangup(int fd) {
+  struct termios opt;
+
   return (tcgetattr(fd, &opt) == -1) && (errno == EIO);
 }
 
 int serial_set_attr(int fd, unsigned int baudrate, enum databit db,
                     enum stopbit sb, enum parity p, int vtime, int vmin) {
 
-  tcgetattr(fd, &opt);
+  struct termios opt;
+  if (tcgetattr(fd, &opt) == -1) {
+    log_error("can not get attributes of fd: %d", fd);
+    return -1;
+  }
 
   // notice that some values should go see
   // termios.h & serial.h to get the full message
-  SERIAL_LOG("request from fd: %d, "
-             "set baudrate: %u, databit: %d, stopbit: %d, "
-             "parity: %d, vtime: %d, vmin: %d",
-             fd, baudrate, db, sb, p, vtime, vmin);
+  log_debug("request from fd: %d, "
+            "set baudrate: %u, databit: %d, stopbit: %d, "
+            "parity: %d, vtime: %.2fs, vmin: %d",
+            fd, baudrate, db, sb, p, vtime / 10.0f, vmin);
 
   serial_set_baudrate(&opt, baudrate);
   opt.c_cflag |= CLOCAL | CREAD; /* | CRTSCTS */
@@ -92,5 +98,19 @@ int serial_set_attr(int fd, unsigned int baudrate, enum databit db,
 
   tcflush(fd, TCIFLUSH); // 丢掉已经接收到设备的数据
   // 设置属性并立即生效
+  return (tcsetattr(fd, TCSANOW, &opt));
+}
+
+int serial_set_vtime_vmin(int fd, int vtime, int vmin) {
+  struct termios opt;
+  if (tcgetattr(fd, &opt) == -1) {
+    log_error("can not get attributes of fd: %d", fd);
+    return -1;
+  }
+
+  opt.c_cc[VTIME] = vtime;
+  opt.c_cc[VMIN] = vmin;
+
+  tcflush(fd, TCIFLUSH);
   return (tcsetattr(fd, TCSANOW, &opt));
 }

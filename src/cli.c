@@ -71,10 +71,10 @@ static int run_command(int fd, enum cmd cmd, uint16_t id, uint8_t times,
 
   switch (cmd) {
   case CMD_ENROLL:
-    st = fp_auto_enroll(fd, id, times, true, false, true, false, false, 15000);
+    st = fp_auto_enroll(fd, id, times, true, false, true, false, false);
     break;
   case CMD_IDENTIFY:
-    st = fp_auto_identify(fd, 2, id, true, false, 15000);
+    st = fp_auto_identify(fd, 2, id, true, false);
     break;
   case CMD_GET_IMAGE:
     st = fp_get_image(fd);
@@ -221,7 +221,7 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  int fd = fp_open(dev, DEFAULT_BAUD);
+  int fd = fp_open(dev, DEFAULT_BAUD, 100, 0);
   if (fd < 0) {
     log_error("can not open device %s!", dev);
     return 1;

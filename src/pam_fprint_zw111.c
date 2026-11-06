@@ -1,4 +1,3 @@
-#include <security/_pam_types.h>
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
@@ -13,6 +12,7 @@
 #endif
 
 #include "protocol.h"
+#include "pub.h"
 #include "waiter.h"
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>
@@ -31,17 +31,21 @@
 #define FP_ERR_MAX_RETRY (5)
 
 struct pam_dev_ctx {
-  int *fd;
+  int fd;
   pam_handle_t *pamh;
+  int resp_timeout;
+  int resp_nbytes;
 };
 
 static enum wait_stat _open_dev(void *ctx) {
   struct pam_dev_ctx *pCtx = ctx;
-  int *fd = pCtx->fd;
+  int *fd = &pCtx->fd;
   enum wait_stat ret = WAIT_DONE;
   const pam_handle_t *pamh = pCtx->pamh;
+  const int resp_timeout = CLAMP(pCtx->resp_timeout, 0, 255);
+  const int resp_nbytes = CLAMP(pCtx->resp_nbytes, 0, 12);
 
-  *fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE);
+  *fd = fp_open(FINGER_MOD, DEFAULT_BAUDRATE, resp_timeout, resp_nbytes);
   if (*fd >= 0) {
     log_info("device opened!");
     return ret;
@@ -58,7 +62,7 @@ static enum wait_stat pam_remove_finger(void *ctx) {
   struct pam_dev_ctx *pCtx = ctx;
   const pam_handle_t *pamh = pCtx->pamh;
 
-  uint8_t dev_status = fp_get_image(*(pCtx->fd));
+  uint8_t dev_status = fp_get_image(pCtx->fd);
   /* 如果检测有手指就提醒，其他情况均认为是函数返回失败 */
   if (FP_IS_STATUS(dev_status, FP_OK)) {
     ret = WAIT_AGAIN;
@@ -78,7 +82,7 @@ static bool pam_connect_dev(pam_handle_t *pamh, struct pam_dev_ctx *pCtx,
                             bool is_reconnect) {
   enum wait_stat wst;
   if (is_reconnect)
-    fp_close(*(pCtx->fd));
+    fp_close(pCtx->fd);
 
   wst = exec_fn_until(MAX_TIMEOUT, 1000, _open_dev, pCtx);
 
@@ -130,7 +134,7 @@ static void pam_parse_args(pam_handle_t *pamh, int argc, const char *argv[],
     if (pair->key == 0 && pair->value == 0)
       break;
 
-    log_debug("key %s with value %zu is_matched: %d", pair->key, pair->value,
+    log_debug("key %s with value %ld is_matched: %d", pair->key, pair->value,
               pam_parse_arg(argv[i], pair));
   }
 }
@@ -162,9 +166,10 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   int ret = PAM_SUCCESS;
   uint8_t status;
-  int fd = -1;
   enum wait_stat wst;
-  struct pam_dev_ctx pCtx = {.fd = &fd, .pamh = pamh};
+  struct pam_dev_ctx pCtx = {
+      .pamh = pamh, .resp_timeout = resp_timeout->value, .resp_nbytes = 0};
+  int *pfd = &pCtx.fd;
 
   if (pam_connect_dev(pamh, &pCtx, false) == false) {
     ret = PAM_AUTHINFO_UNAVAIL;
@@ -183,8 +188,9 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
      上任何一个用户，这当然是不安全的，
      但我的场景只是自用，因此不考虑这些安全问题。
      毕竟如果真要安全的话就不会选择自己 DIY 了(doge) */
-  while ((status = fp_auto_identify(fd, 2, 0xFFFF, true, false,
-                                    resp_timeout->value)) != FP_OK) {
+  status = fp_check_sensor_state(*pfd);
+
+  while ((status = fp_auto_identify(*pfd, 2, 0xFFFF, true, false)) != FP_OK) {
     delay_ms(100);
 
     switch (status) {
@@ -256,11 +262,11 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   log_info("identified!");
 
 cleanup:
-  if (fd >= 0) {
+  if (*pfd >= 0) {
     if (ret != PAM_SUCCESS) {
-      fp_cancel(fd);
+      fp_cancel(*pfd);
     }
-    fp_close(fd);
+    fp_close(*pfd);
   }
 
   return ret;

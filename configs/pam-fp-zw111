@@ -25,8 +25,8 @@
 
 # 参数说明(注意参数顺序是固定的，不要改动，但参数可以缺项，此时使用代码内默认值)
 # resp_block: 响应超时是否阻塞整个 PAM 验证过程(如果超时则一直超时，不退出)
-# resp_timeout: 每次响应的超时时长(最大是 10000ms，超过的话就取决于设备超时帧)
+# resp_timeout: 每次响应的超时时长(0 ~ 255, 单位 0.1s) 
 # resp_maxretry: 响应的最大尝试次数
 #                 当 `resp_block = 0` 时，若超时，最多尝试 `resp_maxretry` 次
 #                 之后直接认为验证失败
-auth sufficient pam_fprint_zw111.so resp_block=0 resp_timeout=10000 resp_maxretry=3
+auth sufficient pam_fprint_zw111.so resp_block=0 resp_timeout=1 resp_maxretry=3

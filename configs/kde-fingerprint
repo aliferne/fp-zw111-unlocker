@@ -2,7 +2,7 @@
 # Taken from gdm3’s gdm-fingerprint
 auth    requisite       pam_nologin.so
 auth	required	pam_succeed_if.so user != root quiet_success
-auth required pam_fprint_zw111.so resp_block=1 resp_timeout=10000 resp_maxretry=3
+auth required pam_fprint_zw111.so resp_block=1 resp_timeout=100 resp_maxretry=3
 #auth	required	pam_fprintd.so
 auth    optional        pam_kwallet5.so
 @include common-account

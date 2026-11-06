@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "serial.h"
+#include "pub.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -41,11 +42,6 @@
 
 /* a command/slave pack carries a code byte right after the pack header */
 #define IS_CODE_VALID(pack_id) ((pack_id) == 1U || (pack_id) == 7U)
-
-#define LEN(buf) (sizeof((buf)) / sizeof((buf)[0]))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define CLAMP(x, min, max) MIN((max), MAX((x), (min)))
 
 #ifdef PROTOCOL_USE_LOG
 #include "log.h"
@@ -145,98 +141,53 @@ static uint8_t fp_send_cmd(int fd, uint8_t code, const uint8_t *data,
     return FP_FAIL;
   }
 
-  dump("send: ", buf, n);
-  size_t off = 0;
-  while (off < n) {
-    ssize_t bw = write(fd, buf + off, n - off);
-    if (bw < 0) {
-      if (errno == EINTR)
-        continue;
-      log_error("write failed: %s", strerror(errno));
-      return FP_IO_ERR;
-    }
-    if (bw == 0) {
-      log_error("write returned 0");
-      return FP_IO_ERR;
-    }
-    off += (size_t)bw;
+  ssize_t bw = write(fd, buf, n);
+  if (bw == -1 || (size_t)bw != n) {
+    log_error("write failed: %s, bw: %d, n: %d", strerror(errno), bw, n);
+    return FP_IO_ERR;
   }
+  dump("send: ", buf, n);
+
   log_debug("write %zu bytes", n);
   return FP_OK;
 }
 
-/* nbr: number of bytes read, timeout(ms) */
-static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr,
-                            int timeout) {
-  size_t got = 0;
-  size_t want = FP_PACKHEADER_SIZE;
-  struct pollfd pfd = {.fd = fd, .events = POLLIN | POLLPRI};
+/* nbr: number of bytes read */
+static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr) {
+  if (len == 0) {
+    return FP_FAIL;
+  }
 
-  /* a frame is [9-byte header][pack_len bytes], so read the header first,
-     learn the total length from pack_len, then read the rest
-     !!! the condition of while is important, basically we just need `read`
-     to recv so many bytes, if we wait for whole frame, then the timeout is
-     useless
-     the key point to write blog, how to parse a frame */
-  while (got < want) {
-    int ready = poll(&pfd, 1, timeout);
-    if (ready < 0) {
-      if (errno == EINTR)
-        continue;
-      log_error("poll failed: %s", strerror(errno));
-      return FP_IO_ERR;
-    }
-    if (ready == 0) {
-      log_warn("recv timeout, got %zu/%zu bytes", got, want);
+  ssize_t br;
+  br = read(fd, buf, len);
+  if (br <= 0) {
+    log_error("read failed: %s", strerror(errno));
+    if (errno == ENOENT) { // vtime & vmin 控制下的超时似乎会使得 errno 为该值
       return FP_TIMEOUT;
     }
-    /* POLLHUP/POLLERR shows up when the tty is torn down (device unplugged) */
-    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-      log_error("device hangup/error (revents=0x%x)", (unsigned)pfd.revents);
-      return FP_IO_ERR;
-    }
 
-    ssize_t br = read(fd, buf + got, want - got);
-    if (br < 0) {
-      if (errno == EINTR)
-        continue;
-      log_error("read failed: %s", strerror(errno));
+    if (serial_is_dev_hangup(fd)) {
       return FP_IO_ERR;
     }
-    if (br == 0) {
-      log_error("read EOF (device gone?)");
-      return FP_IO_ERR;
-    }
-    got += (size_t)br;
-
-    /* only trust the length field once the whole header has arrived */
-    if (want == FP_PACKHEADER_SIZE && got >= FP_PACKHEADER_SIZE) {
-      uint16_t pack_len =
-          ((uint16_t)buf[FP_OFF_PACKLEN] << 8) | buf[FP_OFF_PACKLEN + 1];
-      want = FP_PACKHEADER_SIZE + pack_len;
-      if (want > len) { // 按道理来说这种的可能性还挺小的
-        log_error("frame too large: %zu > %zu", want, len);
-        return FP_FAIL;
-      }
-    }
+    return FP_FAIL;
   }
-  *nbr = got;
-  dump("recv: ", buf, got);
 
+  *nbr = br;
+  dump("read: ", buf, br);
   return FP_OK;
 }
 
 /* run one command/response transaction. On success sets *dev_status to the
  * device confirm code and returns FP_OK; on local failure returns a negative
- * uint8_t. timeout(ms) */
+ * uint8_t. */
 static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
                            size_t send_len, uint8_t *recv, size_t recv_len,
-                           int timeout, const char *fail_msg) {
+                           const char *fail_msg) {
   int nbr = 0;
   uint8_t st;
 
   if ((st = fp_send_cmd(fd, code, send, send_len)) != FP_OK ||
-      (st = fp_recv_pack(fd, recv, recv_len, &nbr, timeout)) != FP_OK) {
+      (st = fp_recv_pack(fd, recv, recv_len, &nbr)) != FP_OK) {
     log_error("send or recv failed(err: %s)", fp_strcode(st));
     goto out;
   }
@@ -252,10 +203,10 @@ out:
 }
 
 /* return fd when successfully opened, -1 if not, -2 if locked */
-int fp_open(const char *devname, unsigned int baudrate) {
+int fp_open(const char *devname, unsigned int baudrate, int vtime, int vmin) {
   log_info("now openning device %s...", devname);
 
-  int fd = open(devname, O_RDWR | O_NOCTTY | O_NDELAY);
+  int fd = open(devname, O_RDWR | O_NOCTTY);
   if (fd == -1) {
     log_error("can not open device %s!", devname);
     return -1;
@@ -279,10 +230,10 @@ int fp_open(const char *devname, unsigned int baudrate) {
     fp_close(fd);
     return -2;
   }
-  /* VMIN=0, VTIME=0: read returns whatever is available at once; the waiting
-     is driven by poll() in fp_recv_pack, so its timeout is authoritative. */
+
   int ret;
-  ret = serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, 0, 0);
+  ret = serial_set_attr(fd, baudrate, DATABIT_8, STOPBIT_1, PARITY_NON, vtime,
+                        vmin);
   if (ret != 0) {
     log_error("failed to configure the serial port!"
               "(ret: %d, errno: %s)",
@@ -316,41 +267,40 @@ int fp_close(int fd) {
 uint8_t fp_get_image(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x01, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                     "get image failed");
+  return fp_transact(fd, 0x01, NULL, 0, buf, RECV_BUF_SIZE, "get image failed");
 }
 
 uint8_t fp_read_sys_para(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+  return fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE,
                      "read sys para failed");
 }
 
 uint8_t fp_check_module_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+  return fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE,
                      "check module failed");
 }
 
 uint8_t fp_check_sensor_state(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+  return fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE,
                      "check sensor failed");
 }
 
 uint8_t fp_reset_settings(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+  return fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE,
                      "reset settings failed");
 }
 
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
                        bool return_status, bool allow_overwrite,
-                       bool allow_duplicate, bool require_remove, int timeout) {
+                       bool allow_duplicate, bool require_remove) {
   // TODO: max id limit if (id >)
   /* theoretically enrolling time can be larger than 5(max to 255),
      but better not */
@@ -370,12 +320,12 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE, timeout,
+  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE,
                      "enroll failed");
 }
 
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                         bool led_ctrl, bool return_status, int timeout) {
+                         bool led_ctrl, bool return_status) {
   /* bit1, 6~15 is reserved */
   return_status = false; // never open it
   uint16_t param = ((!return_status) << 2 | led_ctrl << 0);
@@ -386,7 +336,7 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
   /* 模块的 timeout 大概在 11s 左右 */
-  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE, timeout,
+  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE,
                      "auto identify failed");
 }
 
@@ -398,21 +348,19 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
   return fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
-                     DEFAULT_TIMEOUT, "control light failed");
+                     "control light failed");
 }
 
 uint8_t fp_cancel(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                     "cancel failed");
+  return fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, "cancel failed");
 }
 
 uint8_t fp_sleep(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
-                     "sleep failed");
+  return fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, "sleep failed");
 }
 
 uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
@@ -420,13 +368,13 @@ uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
 
   return fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
-                     DEFAULT_TIMEOUT, "delete char/template failed");
+                     "delete char/template failed");
 }
 
 uint8_t fp_empty(int fd) {
   uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE, DEFAULT_TIMEOUT,
+  return fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE,
                      "empty char/template failed");
 }
 

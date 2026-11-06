@@ -13,10 +13,7 @@ static uint8_t fp_send_cmd(int fd, const uint8_t *data, size_t data_len) {
   }
 
   ssize_t bw = write(fd, data, n);
-  if (bw == -1) {
-    log_error("write failed: %s", strerror(errno));
-    return FP_IO_ERR;
-  } else if ((size_t)bw != n) {
+  if (bw == -1 || (size_t)bw != n) {
     log_error("write failed: %s, bw: %d, n: %d", strerror(errno), bw, n);
     return FP_IO_ERR;
   }
@@ -27,22 +24,22 @@ static uint8_t fp_send_cmd(int fd, const uint8_t *data, size_t data_len) {
 }
 
 static uint8_t fp_recv_pack(int fd, uint8_t *data, size_t data_len) {
-  size_t n = data_len;
-  if (n == 0) {
+  if (data_len == 0) {
     return FP_FAIL;
   }
 
   ssize_t br;
   br = read(fd, data, data_len);
   if (br <= 0) {
-    log_error("read failed: %s%s", strerror(errno), (br == 0) ? " <EOF>" : "");
-    /* 这一个可以借助 ioctl 或者 tcgetattr 实现
-     * ioctl 是不可移植的，而 termios api 是可移植的
-     * 本质上都差不多，就是访问 fd， 发现访问不到 errno 就置位 EIO
-     */
-    if (serial_is_dev_hangup(fd)) {
-        log_error("device hangup: %s", strerror(errno));
+    log_error("read failed: %s", strerror(errno));
+    if (errno == ENOENT) {
+      return FP_TIMEOUT;
     }
+
+    if (serial_is_dev_hangup(fd)) {
+      return FP_IO_ERR;
+    }
+    return FP_FAIL;
   }
 
   dump("read: ", data, br);

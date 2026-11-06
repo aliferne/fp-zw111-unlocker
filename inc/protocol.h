@@ -19,16 +19,6 @@
 #define FP_TIMEOUT 0x26
 #define FP_FINGER_ALREADY_ENROLLED 0x27
 
-// if (ret == 0x00) {
-//   log_info("enroll success!");
-// } else if (ret == 0x25) {
-//   log_error("enroll time is invalid!");
-// } else if (ret == 0x1F) {
-//   log_error("the storage is full! use `allow_overwrite` to overwrite the "
-//             "finger storage or delete some fingers!");
-// } else if (ret == 0x0A) {
-//   log_error("can not merge template!");
-
 /*  手册中最后一个错误码以 0x40 结束，下面是自定义情况 */
 
 #define FP_IO_ERR 0x41
@@ -87,6 +77,10 @@ enum fp_light_mode {
  * Args:
  *  - devname: 设备名称 (e.g. /dev/ttyUSB0)
  *  - baudrate: 波特率 (@see termios.h)
+ *  - vtime & vmin:
+ *     vtime 表示等待的时长，单位 0.1s, 可等待范围 [0, 25.5] s
+ *     vmin 表示单次 IO 等待接收的字节，详细的组合：
+ *     @see http://unixwiz.net/techtips/termios-vmin-vtime.html
  *
  * Return:
  *  0 成功， -1 失败
@@ -94,7 +88,7 @@ enum fp_light_mode {
  * 注意需要与 `fp_close` 一起调用，该函数会对打开的文件上非阻塞互斥锁，
  * 使用 `fp_close` 以确保关闭文件时顺带释放锁
  */
-int fp_open(const char *devname, unsigned int baudrate);
+int fp_open(const char *devname, unsigned int baudrate, int vtime, int vmin);
 
 /* 释放文件锁并关闭文件 */
 int fp_close(int fd);
@@ -144,17 +138,12 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
  *  - require_remove: require remove finger to enter next enroll.
  *                    if this is set, you should remove and put your
  *                    finger again while enrolling the finger print
- *  - timeout(ms): the timeout for waiting the response of device
- *                notice that the TIMEOUT FRAME from the device is received
- *                circa per 10s, of course you can pass a value over 10000,
- *                but that usually means you would rather waiting for
- *                the device to depend when should timeout.
  *
  * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
                        bool return_status, bool allow_overwrite,
-                       bool allow_duplicate, bool require_remove, int timeout);
+                       bool allow_duplicate, bool require_remove);
 
 /* auto identify finger print,
  * the module shines green light when success, red blinking light when failed.
@@ -172,16 +161,11 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
  *                   that means it'll return data at the key step in the
  *                   flowchart of the documentation, TURN OFF RECOMMENDED
  *                   (This function is not opened, it'll always be false)
- *  - timeout(ms): the timeout for waiting the response of device
- *                notice that the TIMEOUT FRAME from the device is received
- *                circa per 10s, of course you can pass a value over 10000,
- *                but that usually means you would rather waiting for
- *                the device to depend when should timeout.
  *
  * Return 0 on success, non-zero on failure
  */
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
-                         bool led_ctrl, bool return_status, int timeout);
+                         bool led_ctrl, bool return_status);
 
 // translate status_code into strings
 const char *fp_strcode(uint8_t c);
