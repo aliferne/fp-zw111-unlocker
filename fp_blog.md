@@ -22,6 +22,10 @@
 
 # 项目架构
 
+因此一开始是硬件的调研，我想知道有什么指纹模组可以给我开发，于是问了 deepseek 之后决定搞个 ZW111 模块来玩，这玩意加上一个 USB 转 TTL 也就 30 块，市面上的 Windows Hello 模组大概是四五十到一百都有。
+
+然后拿到数据手册，脑子里面便大概有了一些开发的方向，我个人角度上认为这一部分主要有 4 个递进的任务： Linux 串口配置(`termios.h`) -> Linux 串口通信(`fcntl.h` 等) -> 实现数据手册规定协议 -> 测试功能
+
 我们需要了解一下整个任务涉及到的部分：
 
 Linux 串口配置 -> 与 ZW111 的通信 -> 开发属于 ZW111 的 PAM 模块 -> 配置关键文件，使 libpam 能够与自己的 PAM 模块交互
@@ -33,22 +37,148 @@ PAM 模块借助 conv_func 机制 -> 讲解如何编写 PAM Application
 
 TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
 
-# ZW111 模块开发
+# Linux 串口编程与文件 IO
 
-因此一开始是硬件的调研，我想知道有什么指纹模组可以给我开发，于是问了 deepseek 之后决定搞个 ZW111 模块来玩，这玩意加上一个 USB 转 TTL 也就 30 块，市面上的 Windows Hello 模组大概是四五十到一百都有。
+在正式进入主题之前，我们需要先了解一下什么是系统调用：
 
-然后拿到数据手册，脑子里面便大概有了一些开发的方向，我个人角度上认为这一部分主要有 4 个递进的任务： Linux 串口配置(`termios.h`) -> Linux 串口通信(`fcntl.h` 等) -> 实现数据手册规定协议 -> 测试功能
+系统调用 (Syscall) 是受控的内核入口，借用这一机制，一个程序可以请求内核以自己的名义去执行某些动作，它 **在编程角度上来说和调用 C 语言的 API 并无区别**，但在底层角度，系统调用会涉及到处理器的用户态到核心态的切换、中断机制和汇编等内容，这些内容我们在这里并不是特别关心，但还是需要大概知道一下。
 
-写串口配置实际上是一个比较无聊的过程，因此我是直接抄的 《嵌入式 Linux 开发教程》 里面的代码，这部分就没什么好说的了。
+对于 Linux C 系统编程，这些 API **大部分都会在调用失败时返回 -1 并设置对应的 errno 值**，我们可以通过 `strerrno(errno)` 来将错误码转字符串，如果有些系统调用并不遵循该原则，我会特别说明。Linux Syscalls 可以通过 `man syscalls` 来查看，我们本次要用到的系统调用主要是 `open`, `write`, `read` 等。
 
-串口配置：需要讲一下 vtime/vmin
+## 串口设备的打开和基础配置
 
-串口通信:
+得益于 Linux 一切皆文件的设计，串口在 Linux 的表现形式为名为 `/dev/ttyXn` 的一个文件。而由于串口的一些特殊属性（波特率、奇偶校验等）， Linux 还开放了一些 API 用于设置串口属性，这些 API 主要在 `termios.h` 里面。 因此串口编程实际上要做的事情就是：打开串口文件 -> 配置串口属性[可选, 默认 9600, 8n1, 无流控] -> 读写串口文件 -> 关闭串口文件。
+
+因此我们先来打开串口文件：
+
+- `int open(const char *pathname, int flags);`
+
+这个函数我相信不需要过多的介绍，`pathname` 就是文件路径，而 `flags` 就是打开文件的标志位。
+我们需要用到的 `flag`: `O_RDWR`, `O_NOCTTY`, `O_NONBLOCK`
+
+我们需要读写串口，因此需要使用 `O_RDWR` 打开串口文件，而由于 Linux 会将串口抽象为 tty 设备，也就意味着默认情况下，系统可能会把串口当作一个控制终端来用，因此就可能能够发送一些特殊的控制字符，比如 `^C`，由于实际我们去使用的时候并不会发送这些特殊控制字符，因此需要借助 `O_NOCTTY` 关闭这一选项。
+
+`O_NONBLOCK` 从字面意思上来理解就是不要阻塞，即以非阻塞的形式打开文件，这个选项的作用我会放到下面讲。
+
+然后就轮到配置串口了：
+
+比较基础的，如设置波特率这些的代码比较简单，写起来也很无聊，因此我是直接抄的 《嵌入式 Linux 开发教程》 里面的代码，但有些配置选项则值得说道说道：
+
+如果说上面的选项指示系统如何打开串口文件，那么下面的选项就指示我们系统要如何与串口通信，我们期望收发纯粹的二进制数据，对于输入，由于数据手册并没要求使用流控，因此我们把软件流控关掉：
+
+```c
+opt.c_iflag &= ~(IXON | IXOFF | IXANY);
+```
+
+而对于输出显示之类的，什么 `<CR><LF>`, `<LF>` 之类的都是没有必要的字符，我们并不需要，对应的也就是关掉输出处理（使用原始输出）、关掉规范模式和关掉回显等：
+
+```c
+opt.c_oflag &= ~OPOST; // 使用原始输出
+// 关掉规范模式，回显，终端信号等
+opt.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+```
+
+## 串口配置中的 `vtime` & `vmin` 以及串口通信的设计取舍
+
+然后我们就来到了 `struct termios->c_cc` 的配置选项了，其他的选项我们并不关心，我们只需要看 `vtime` & `vmin` 即可。为什么要看这两个选项呢？这就要说一下串口和这个指纹模组的特殊地方了。
+
+串口文件和存储在磁盘中的普通文件不同，对于普通的文件，你打开之后要读多少、写多少，你/代码心理都有数，**但是**串口是一种通信设备，我们大部分时候可能都是开着这个设备等数据，只有那么一小段时间设备突然发送一段数据流过来，**而且**通信设备是可能断连的，这就引出了两个代码设计上的思考：
+
+1. 我们是要等到海枯石烂还是到点就走？
+
+- 死等也就意味着卡死在这里，而到点就走又需要定义超时时的行为
+
+2. 如果串口断开了怎么办？
+
+我们这里的实验代码参考 [rd_nb.c][rd_nb.c]
+
+对于第一个权衡点，这时就要提到之前说的 `O_NONBLOCK` 标志位了：
+串口在非阻塞读的情况下，不论有无数据，都会立即返回成功，所以你会看到非常抽象的情况：
+
+```bash
+19:35:34 DEBUG ./rd_nb.c:23: write 12 bytes
+write:        EF 01 FF FF FF FF 01 00 03 35 00 39
+19:35:34 DEBUG ./rd_nb.c:22: current errno: 0 => Success
+19:35:34 ERROR ./rd_nb.c:37: read failed: Success # 读取失败但是成功，这是因为 read 直接返回 0
+```
+
+如果设置了阻塞，那么此时对串口的读操作状态就会**取决于** `vtime` 和 `vmin` 这两个变量，前者表示单次读取的最大等待时间(单位 0.1s, 等待时间范围为 0 ~ 25.5s，对应传入 0 ~ 255)，后者表示单次读取需要接收到的最少字节数， 这两个变量有点类似于 `timeout` 的性质，设置的值有如下四种情况：
+
+1. `vtime = 0, vmin = 0`: 此时对应不阻塞，不论如何都会直接返回，一般来说都不建议这种方式
+2. `vtime > 0, vmin = 0`: 此时会等待最大 vtime 的时间，只要有数据就会返回
+3. `vtime = 0, vmin > 0`: 此时要求至少收集到 vmin 个字节后才返回，因此少于 vmin 个字节的行为是未定义的
+4. `vtime > 0, vmin > 0`: 此时要求只要拿到 vmin 个字节，或者到了 vtime 要求的时间， read 就会成功返回
+
+受限于篇幅原因我们只需要了解上面那些就足够了，如果想要了解更多东西，可以参考[这篇文章][vtime & vmin]
+
+对于第二点，实际上我们有一个很好用的检测设备是否断连的方法，我们只需要借助 `tcgetattr` 即可，这个函数在尝试获取串口配置失败时会返回 -1, 并设置 errno 为一些特定的值，如果 `errno == EIO`，那么一般就是串口断连了。严谨一些的话可以用 `poll`，但是我没用，这里会在后面解释 TODO:
+
+这里可能会有人问，为什么不直接判断 `read` 后的 `errno`，问题在于第一次 `read` 返回的读取字节数为 0, 此时代表的实际上是 `read` 认为读到 EOF 了，这是成功的标志，因此不会设置 `errno`，你就无法通过这个来判断，因此要判断设备是否被拔出就必须再操作一次串口文件，因此就需要调用 `tcgetattr`，这是比较简单的：
+
+- 不调用 `tcgetattr` 的情况（那个 `serial_is_dev_hangup()` 函数是我的一个简易封装，就是我在讲解第二点一开始时提到的方法）:
+
+![check errno when tcgetattr not called][check errno when tcgetattr not called]
+
+- 调用 `tcgetattr` 的情况，其中 gdb 终端那一行表示显示调用 errno 对应的函数并解引用返回的地址后得到的返回值，可以看到返回值为 5(`EIO`):
+
+![check errno when tcgetattr called][check errno when tcgetattr called]
+
+## 串口多进程的数据竞争
+
+我一开始说了，由于我自己犯贱改需求，所以本来只是用于解锁 KDE 锁屏的，并不需要考虑多进程问题，但扩展需求之后就必须要考虑多进程情形了。
+比如最简单的，一个终端跑 `sudo su`， 一个终端跑 `sudo apt update && sudo apt upgrade -y`，这种情况下，如果你使用指纹模块，你要如何确保不会导致数据竞争？万一两边此时都要求验证了，然后同时对设备发送 `auto_identify`，万一有一边发送了 `cancel`，那么另一边还验证不验证…这些问题很麻烦，但都可以通过**最朴素的加锁方式**来实现。
+
+当然，首先看下加锁与不加锁的区别，下面是不加锁的：
+
+![fp-zw111-test-without-lock][fp-zw111-test-without-lock]
+
+而这个是加锁的：
+
+![fp-zw111-test-with-lock][fp-zw111-test-with-lock]
+
+看完对比之后你就会理解为什么要加锁了，那么问题来了：怎么加锁？加什么锁？
+
+## Linux 中的文件锁
+
+## 总结
+
+最后我们再来梳理一下整体的流程：
+
+打开串口文件 -> 确认文件是 tty 设备[可选] -> 给文件加锁 -> 配置串口选项 -> 返回文件描述符
+
+这就是 [protocol.c][protocol.c] 中 `fp_open` 函数的基本思路，那么 `fp_close` 实际上就是对称的关系：先解锁再关闭文件。
+
+---
+
+思考串口通信，并将这些点融入文章中
+
 - 串口设备文件 IO 需要考虑多进程？ => 互斥锁 (lockf)
 - 设备插拔断联导致的异常应当怎么处理？
 - 读需要读超时？ => 设备超时帧/代码设定的超时时间
 - 写？ => 一次性写入/分大小写？
 - 读？ => 一次性读完/分大小读？
+
+---
+
+2. `ssize_t write(int fd, const void *buf, size_t count);`
+
+3. `ssize_t read(int fd, void *buf, size_t count);`
+
+4. `int close(int fd);`
+
+TODO: 再简单介绍一下 `ioctl`，以及为什么用 `tcgetattr` 替代
+
+# ZW111 模块开发
+
+这部分不想过多赘述，基本上就是照着手册开发就行。
+
+从需求的角度上来说我们需要开发的功能实际上只有：
+- 注册指纹(auto_enroll)
+- 验证指纹(auto_identify)
+
+其余的比如 `read_sys_para` 和 `check_sensor` 之类的其实是衍生功能，比如指纹满了要删除点库存、取消本次自动验证/注册，等等，但是 `get_image` 是确实有必要的，我在开发过程中测试发现如果你不在指纹验证错误并要求重试时加入这个，并要求用户移开手指，那么指纹模组会直接开始第二次识别，也就是说可能会白白浪费很多重试次数。
+
+代码见[这里][protocol.c]
 
 # PAM 模块
 
@@ -361,8 +491,9 @@ qml 之间似乎通过一些规约互相引用，需要了解一下
 然后锁屏界面就会替换成你自己自定义的
 
 ---
+
 comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情考虑是否加入博客中
-          现在需要加入了，我觉得还是新建一个标签好一些
+现在需要加入了，我觉得还是新建一个标签好一些
 
 然后发现 label 无法汉化，
 查询 i18nd => GNU gettext & po/mo 文件
@@ -434,11 +565,17 @@ pamtester: successfully authenticated
 ---
 
 [项目开源链接]: https://github.com/aliferne/fp-zw111-unlocker
+[vtime & vmin]: http://unixwiz.net/techtips/termios-vmin-vtime.html
 
-# 参考资料（TODO: 还需要从 README 中补充一些过来）
+[rd_nb.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/wrrd-test/rd_nb.c
+[protocol.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/protocol.c
+[check errno when tcgetattr not called]: ./images/check-errno-when-tcgetattr-not-called.png
+[check errno when tcgetattr called]: ./images/check-errno-when-tcgetattr-called.png
+[fp-zw111-test-without-lock]: ./images/fp-zw111-test-without-lock.webm
+[fp-zw111-test-with-lock]: ./images/fp-zw111-test-with-lock.webm
 
 - 《Linux 系统编程》 Chapter 1, 2, 11
-- 《Linux/Unix 系统编程手册》 Chapter 23, 55, 附录 B —— 解析命令行选项
+- 《Linux/Unix 系统编程手册》 Chapter 3, 23, 55, 附录 B —— 解析命令行选项
 - 《嵌入式 Linux 开发教程》（上） Chapter 16
 
 1. https://zhuanlan.zhihu.com/p/663757925

@@ -1,6 +1,6 @@
 #include "protocol.h"
-#include "serial.h"
 #include "pub.h"
+#include "serial.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -162,7 +162,8 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr) {
   br = read(fd, buf, len);
   if (br <= 0) {
     log_error("read failed: %s", strerror(errno));
-    if (errno == ENOENT) { // vtime & vmin 控制下的超时似乎会使得 errno 为该值
+    // vtime & vmin 控制下的超时似乎会使得 errno 为该值
+    if (errno == ENOENT) {
       return FP_TIMEOUT;
     }
 
@@ -181,18 +182,18 @@ static uint8_t fp_recv_pack(int fd, uint8_t *buf, size_t len, int *nbr) {
  * device confirm code and returns FP_OK; on local failure returns a negative
  * uint8_t. */
 static uint8_t fp_transact(int fd, uint8_t code, const uint8_t *send,
-                           size_t send_len, uint8_t *recv, size_t recv_len,
-                           const char *fail_msg) {
+                           size_t send_len, const char *fail_msg) {
   int nbr = 0;
   uint8_t st;
+  uint8_t buf[RECV_BUF_SIZE] = {0};
 
   if ((st = fp_send_cmd(fd, code, send, send_len)) != FP_OK ||
-      (st = fp_recv_pack(fd, recv, recv_len, &nbr)) != FP_OK) {
+      (st = fp_recv_pack(fd, buf, RECV_BUF_SIZE, &nbr)) != FP_OK) {
     log_error("send or recv failed(err: %s)", fp_strcode(st));
     goto out;
   }
 
-  st = fp_get_status_code(recv);
+  st = fp_get_status_code(buf);
   log_debug("nbr: %d, p_recv->code: 0x%02x", nbr, st);
 
 out:
@@ -265,37 +266,23 @@ int fp_close(int fd) {
 }
 
 uint8_t fp_get_image(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x01, NULL, 0, buf, RECV_BUF_SIZE, "get image failed");
+  return fp_transact(fd, 0x01, NULL, 0, "get image failed");
 }
 
 uint8_t fp_read_sys_para(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x0F, NULL, 0, buf, RECV_BUF_SIZE,
-                     "read sys para failed");
+  return fp_transact(fd, 0x0F, NULL, 0, "read sys para failed");
 }
 
 uint8_t fp_check_module_state(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x35, NULL, 0, buf, RECV_BUF_SIZE,
-                     "check module failed");
+  return fp_transact(fd, 0x35, NULL, 0, "check module failed");
 }
 
 uint8_t fp_check_sensor_state(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x36, NULL, 0, buf, RECV_BUF_SIZE,
-                     "check sensor failed");
+  return fp_transact(fd, 0x36, NULL, 0, "check sensor failed");
 }
 
 uint8_t fp_reset_settings(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x38, NULL, 0, buf, RECV_BUF_SIZE,
-                     "reset settings failed");
+  return fp_transact(fd, 0x38, NULL, 0, "reset settings failed");
 }
 
 uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
@@ -318,10 +305,8 @@ uint8_t fp_auto_enroll(int fd, uint16_t id, uint8_t enroll_times, bool led_ctrl,
 
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {id >> 8, id & 0xFF, enroll_times, param >> 8, param & 0xFF};
-  uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x31, send, LEN(send), buf, RECV_BUF_SIZE,
-                     "enroll failed");
+  return fp_transact(fd, 0x31, send, LEN(send), "enroll failed");
 }
 
 uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
@@ -333,11 +318,9 @@ uint8_t fp_auto_identify(int fd, uint8_t score_level, uint16_t id,
   score_level = CLAMP(score_level, 1, 5);
   /* should send id(2 bytes), enroll times(1 byte) and param(2 bytes) */
   uint8_t send[] = {score_level, id >> 8, id & 0xFF, param >> 8, param & 0xFF};
-  uint8_t buf[RECV_BUF_SIZE] = {0};
 
   /* 模块的 timeout 大概在 11s 左右 */
-  return fp_transact(fd, 0x32, send, LEN(send), buf, RECV_BUF_SIZE,
-                     "auto identify failed");
+  return fp_transact(fd, 0x32, send, LEN(send), "auto identify failed");
 }
 
 /* control light band of the module */
@@ -345,37 +328,26 @@ uint8_t fp_control_light(int fd, enum fp_light_mode mode, uint8_t start_color,
                          uint8_t end_color, uint8_t cycles, uint8_t period) {
   /* 功能码, 起始颜色, 结束颜色/占空比, 循环次数, 时间 */
   uint8_t send[] = {(uint8_t)mode, start_color, end_color, cycles, period};
-  uint8_t buf[RECV_BUF_SIZE] = {0};
 
-  return fp_transact(fd, 0x3C, send, LEN(send), buf, RECV_BUF_SIZE,
-                     "control light failed");
+  return fp_transact(fd, 0x3C, send, LEN(send), "control light failed");
 }
 
 uint8_t fp_cancel(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x30, NULL, 0, buf, RECV_BUF_SIZE, "cancel failed");
+  return fp_transact(fd, 0x30, NULL, 0, "cancel failed");
 }
 
 uint8_t fp_sleep(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x33, NULL, 0, buf, RECV_BUF_SIZE, "sleep failed");
+  return fp_transact(fd, 0x33, NULL, 0, "sleep failed");
 }
 
 uint8_t fp_delete_char(int fd, uint16_t id, uint16_t n) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
   uint8_t send[] = {id >> 8, id & 0xFF, n >> 8, n & 0xFF};
 
-  return fp_transact(fd, 0x0C, send, LEN(send), buf, RECV_BUF_SIZE,
-                     "delete char/template failed");
+  return fp_transact(fd, 0x0C, send, LEN(send), "delete char/template failed");
 }
 
 uint8_t fp_empty(int fd) {
-  uint8_t buf[RECV_BUF_SIZE] = {0};
-
-  return fp_transact(fd, 0x0D, NULL, 0, buf, RECV_BUF_SIZE,
-                     "empty char/template failed");
+  return fp_transact(fd, 0x0D, NULL, 0, "empty char/template failed");
 }
 
 const char *fp_strcode(uint8_t s) {

@@ -2,7 +2,9 @@
  * cc ./rd_nb.c ../../src/log.c ../../src/protocol.c ../../src/serial.c \
  * -I../../inc -Wall -Wextra -g -DLOG_USE_COLOR -o wr_test
  */
+#include "log.h"
 #include "pub.h"
+#include <string.h>
 
 extern bool serial_is_dev_hangup(int fd);
 
@@ -17,6 +19,7 @@ static uint8_t fp_send_cmd(int fd, const uint8_t *data, size_t data_len) {
     log_error("write failed: %s, bw: %d, n: %d", strerror(errno), bw, n);
     return FP_IO_ERR;
   }
+  log_debug("current errno: %d => %s", errno, strerror(errno));
   log_debug("write %zu bytes", bw);
   dump("write: ", data, n);
 
@@ -30,6 +33,7 @@ static uint8_t fp_recv_pack(int fd, uint8_t *data, size_t data_len) {
 
   ssize_t br;
   br = read(fd, data, data_len);
+  log_debug("current errno: %d => %s", errno, strerror(errno));
   if (br <= 0) {
     log_error("read failed: %s", strerror(errno));
     if (errno == ENOENT) {
@@ -37,6 +41,7 @@ static uint8_t fp_recv_pack(int fd, uint8_t *data, size_t data_len) {
     }
 
     if (serial_is_dev_hangup(fd)) {
+    // if (errno == EIO || errno == ENXIO) {
       return FP_IO_ERR;
     }
     return FP_FAIL;
