@@ -1,16 +1,6 @@
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
 
-#ifdef PAM_USE_LOG_H
-#include "log.h"
-#else // notice that you should declare `pamh` before call them
-#include <syslog.h>
-#define log_debug(...) pam_syslog(pamh, LOG_DEBUG, __VA_ARGS__)
-#define log_info(...) pam_syslog(pamh, LOG_INFO, __VA_ARGS__)
-#define log_warn(...) pam_syslog(pamh, LOG_WARNING, __VA_ARGS__)
-#define log_error(...) pam_syslog(pamh, LOG_ERR, __VA_ARGS__)
-#endif
-
 #include "protocol.h"
 #include "pub.h"
 #include "waiter.h"
@@ -29,6 +19,16 @@
 #define MAX_TIMEOUT (10 * 1000U)
 #define FP_IDENTIFY_MAX_RETRY (5)
 #define FP_ERR_MAX_RETRY (5)
+
+#ifdef PAM_USE_LOG_H
+#include "log.h"
+#else // notice that you should declare `pamh` before call them
+#include <syslog.h>
+#define log_debug(...) pam_syslog(pamh, LOG_DEBUG, __VA_ARGS__)
+#define log_info(...) pam_syslog(pamh, LOG_INFO, __VA_ARGS__)
+#define log_warn(...) pam_syslog(pamh, LOG_WARNING, __VA_ARGS__)
+#define log_error(...) pam_syslog(pamh, LOG_ERR, __VA_ARGS__)
+#endif
 
 struct pam_dev_ctx {
   int fd;
@@ -129,13 +129,17 @@ static bool pam_parse_arg(const char *argv, struct kv_pair *kvp) {
 static void pam_parse_args(pam_handle_t *pamh, int argc, const char *argv[],
                            struct kv_pair *pairs) {
   struct kv_pair *pair;
+  bool ret = false;
+
   for (int i = 0; i < argc; i++) {
     pair = &pairs[i];
     if (pair->key == 0 && pair->value == 0)
       break;
 
-    log_debug("key %s with value %ld is_matched: %d", pair->key, pair->value,
-              pam_parse_arg(argv[i], pair));
+    ret = pam_parse_arg(argv[i], pair);
+#if 0
+    log_debug("key %s with value %ld is_matched: %d", pair->key, pair->value, ret);
+#endif
   }
 }
 

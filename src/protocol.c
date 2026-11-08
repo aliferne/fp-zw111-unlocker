@@ -4,7 +4,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/file.h>
 #include <time.h>
 #include <unistd.h>
 

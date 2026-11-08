@@ -8,6 +8,10 @@
 
 上半部分直接展示最终成果，少量的迭代过程的思考，下半部分则讲一下和 AI 结合的开发过程，以及对整体架构的把控之类的
 
+---
+
+# title: 为 PC 自制指纹验证功能 —— 指纹模块、Linux 系统编程与 PAM 模块开发二三事
+
 # 前言
 
 这个项目有点个人小玩具的色彩（笑），我的电脑是天选 5 Pro, 没有指纹识别模块，而我自己又主要用 Debian, 当时是和朋友去福州旅游，在闽都 THO 晚上的小型演唱会现场听 DJ 打碟感到无聊，然后思绪就开始发散，**想着说每次解锁电脑都要输入密码，实在是太麻烦了，因此想搞个指纹模块来玩**，于是就有了这篇博客。当然可能有人会觉得我闲得慌，也确实是闲得慌，我要是不折腾，你们看什么啊？ ~~是啊，看什么?~~
@@ -36,6 +40,8 @@ PAM 模块借助 conv_func 机制 -> 讲解如何编写 PAM Application
 编辑 KDE 的 QML 文件 -> kscreenlocker 源码， Qt 的 Signal 机制，`Q_EMIT`，观察 `conv_func` -> 修改 QML 对应部分
 
 TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
+
+## subtitle: 一、从串口到协议
 
 # Linux 串口编程与文件 IO
 
@@ -84,11 +90,13 @@ opt.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
 
 串口文件和存储在磁盘中的普通文件不同，对于普通的文件，你打开之后要读多少、写多少，你/代码心理都有数，**但是**串口是一种通信设备，我们大部分时候可能都是开着这个设备等数据，只有那么一小段时间设备突然发送一段数据流过来，**而且**通信设备是可能断连的，这就引出了两个代码设计上的思考：
 
-1. 我们是要等到海枯石烂还是到点就走？
+1. 我们是要等到海枯石烂还是到点就走
 
-- 死等也就意味着卡死在这里，而到点就走又需要定义超时时的行为
+- 有时需要死等，有时又需要超时避免卡死？
 
 2. 如果串口断开了怎么办？
+
+- 检测是否断开，发现断开就直接退出？还是直到下次重连？
 
 我们这里的实验代码参考 [rd_nb.c][rd_nb.c]
 
@@ -102,14 +110,16 @@ write:        EF 01 FF FF FF FF 01 00 03 35 00 39
 19:35:34 ERROR ./rd_nb.c:37: read failed: Success # 读取失败但是成功，这是因为 read 直接返回 0
 ```
 
-如果设置了阻塞，那么此时对串口的读操作状态就会**取决于** `vtime` 和 `vmin` 这两个变量，前者表示单次读取的最大等待时间(单位 0.1s, 等待时间范围为 0 ~ 25.5s，对应传入 0 ~ 255)，后者表示单次读取需要接收到的最少字节数， 这两个变量有点类似于 `timeout` 的性质，设置的值有如下四种情况：
+非阻塞读的配置是一种 **异步** 模式，我们并不想等待结果，只要调用了就直接返回 ~~是一种 “你给路大油” 的思维~~，而下面的阻塞读则是 **同步** 模式，只有返回结果才会接着往下执行。
+
+**因此如果设置了阻塞，那么就需要考虑是彻底阻塞还是等到不再满足条件为止**，所以此时对串口的读操作状态就会**取决于** `vtime` 和 `vmin` 这两个变量，前者表示单次读取的最大等待时间(单位 0.1s, 等待时间范围为 0 ~ 25.5s，对应传入 0 ~ 255)，后者表示单次读取需要接收到的最少字节数， 这两个变量有点类似于 `timeout` 的性质，设置的值有如下四种情况：
 
 1. `vtime = 0, vmin = 0`: 此时对应不阻塞，不论如何都会直接返回，一般来说都不建议这种方式
 2. `vtime > 0, vmin = 0`: 此时会等待最大 vtime 的时间，只要有数据就会返回
 3. `vtime = 0, vmin > 0`: 此时要求至少收集到 vmin 个字节后才返回，因此少于 vmin 个字节的行为是未定义的
 4. `vtime > 0, vmin > 0`: 此时要求只要拿到 vmin 个字节，或者到了 vtime 要求的时间， read 就会成功返回
 
-受限于篇幅原因我们只需要了解上面那些就足够了，如果想要了解更多东西，可以参考[这篇文章][vtime & vmin]
+需要注意由于 `vtime`, `vmin` 和 `O_NONBLOCK` 是矛盾的，因此如果设置 **非阻塞** 读，这两个变量就必须要是 0, 不然会导致读越界的 SegFault 问题(我没去琢磨源码，如果有知道原因的大佬还请不吝赐教😁)。篇幅原因我们只需要了解上面这些内容就足够了，如果想要了解更多东西，可以参考[这篇文章][vtime & vmin]
 
 对于第二点，实际上我们有一个很好用的检测设备是否断连的方法，我们只需要借助 `tcgetattr` 即可，这个函数在尝试获取串口配置失败时会返回 -1, 并设置 errno 为一些特定的值，如果 `errno == EIO`，那么一般就是串口断连了。严谨一些的话可以用 `poll`，但是我没用，这里会在后面解释 TODO:
 
@@ -140,6 +150,64 @@ write:        EF 01 FF FF FF FF 01 00 03 35 00 39
 
 ## Linux 中的文件锁
 
+### 并发编程是什么
+
+多线程/多进程这种并发编程是一个很有趣但也很恶心的话题，原因在于 **解决多个线程/进程之间的竞争是一件很棘手的事情**。假设对于一个变量 a，如果不去做同步，那么只是读的话还好，但如果是写入操作，我们都知道修改变量在汇编层面上分为三步——读取、修改、写入。假如进程 A 把 a 改成 1, 但尚未写入，进程 B 就进来插手准备修改了，并成功把 a 改成 2, 此时进程 A 恢复，将 a = 1 写入内存中，此时 a 又变成 1 了，但是下一次再运行这段程序，这次反而是进程 B 写到一半被进程 A 插手成功了，那么 a 应该是 1 还是 2 呢？因此我们需要同步协调多个进程/线程对一段资源的访问顺序，技术上来说有很多手段，例如信号、信号量、锁等等，同样的，对于文件来说，我们也有文件锁，用于同步这些线程/进程对该文件资源的访问顺序。
+
+### 劝告锁与强制锁
+
+Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**劝告锁是君子协定，你要不要遵守都行，强制锁是强制你遵守的**，不过值得注意的是，强制锁似乎已经[被移除][the removal of mandatory lock]出 Linux 内核了，我不很确定，因为我也找到了一个说需要通过 `-o mand` 重新挂载文件系统来获取强制锁支持的[文档][the mand option]，不论如何，强制锁总归是很麻烦的， kernel.org 自己都不推荐，**因此我们肯定是使用劝告锁的**。
+
+### 互斥锁与共享锁
+
+考虑完了劝告锁和强制锁的区别之后，我们再来看看是应该使用共享锁还是互斥锁：
+
+- 共享锁允许多个进程并发读，但是不允许并发写——一份笔记可以多个人看，但是不能多个人写，不然就会乱
+- 互斥锁要求同一个时间段内只能有一个进程/线程访问该资源——同一个时间内只能有一个人在上厕所，其他人都得在外面等
+
+我的想法是 **使用互斥锁**，共享锁在这里没有意义，原因如下：
+
+1. 共享锁允许所有其他共享锁获得锁，但是不允许互斥锁获得锁，因此只有存在互斥锁的情况下，共享锁才有意义
+2. 串口应当是独占的文件资源，一个进程有完整的读写要求，即使是共享锁，也无法确保代码里就不会进行写操作，这种情况下依然等价于没加锁
+3. 这个设备是问答式的，除非你其他进程只打开文件并监听，并且有一个主进程发起请求（比如解锁），这种情况下才有可能让所有进程同时读到验证通过的消息
+
+可以看到上面的三点在这个程序里面要做起来实在是很麻烦，因此索性直接互斥锁得了。
+
+一些题外话：在写这篇文章的时候我手动改了一下已经写好的代码做了点实验，事实证明我是对的，因为使用共享锁，后启动的进程直接卡死了，无论加不加 `LOCK_NB` 选项防止阻塞都一样:
+
+![useless shared lock][useless shared lock]
+
+### 选择文件锁 API
+
+那么文件锁有三种选择：`flock`, `fcntl`, `lockf`，其中 `lockf` 是基于 `fcntl` 的封装，我们选择的是 `lockf`。
+这里选择 `lockf` 其实纯粹是惯性原因，我们简单讲一下这三个锁的区别（以下片段直接来自 TLPI 这本经典书籍）：
+
+1. `flock` 只能对整个文件加锁，而 `fcntl`/`lockf` 可以部分加锁
+2. 很多 NFS 实现不认 `flock` 的锁
+3. `flock` 只能放劝告锁
+4. `fcntl`/`lockf` 不会继承父进程的记录锁，从而父进程也就不会因为子进程的释放而失去这把锁
+5. 记录锁在 `exec()` 中会得到保留
+6. 一个进程中的所有线程会共享同一组记录锁
+
+首先，我们一开始就决定要用劝告锁，所以第 3 点对我们而言不是缺点，然后，我们不会使用 `fork`/`exec`，第 4, 5 点对我们来说也没什么实际影响，其次，我们要考虑的是多进程的并发，而不是多线程的并发，因此第 6 点其实也没什么，因此看下来似乎只有 1 和 2 会影响我们的选择？但是第 1 点，我们一开始就说过了，串口文件是特殊的文件，它更像是一种通信管道，你无法 `lseek`，局部加锁也就无从谈起，因此似乎只有第 2 点才是影响因素了，但是我的电脑用的是 brtfs，不需要考虑 NFS。 **所以选择 `lockf` 纯粹只是惯性原因，我看它自由度比较高就选了（笑），`lockf` 默认就是互斥锁模式，不像 `fcntl` 要配一堆东西，省事了才选的它**，当然如果你要改成 `flock`，那也是一样的，没什么区别
+
+需要注意，**我不打算让程序一直阻塞下去，因此只要失败了就会直接返回**，这也是上面视频中一个时刻始终不会出现两个 `sudo` 验证程序的原因，这里看你取舍，我觉得这样子挺好的就没配置阻塞，如果你愿意的话也可以把我的代码拿去稍作修改。
+
+## 如何读/写，以及为何不使用 `poll`
+
+2. `ssize_t write(int fd, const void *buf, size_t count);`
+
+3. `ssize_t read(int fd, void *buf, size_t count);`
+
+## 解锁和关闭串口文件
+
+解锁：
+- `lockf(fd, F_ULOCK, 0);`
+
+关闭串口文件：
+- `int close(int fd);`
+
+
 ## 总结
 
 最后我们再来梳理一下整体的流程：
@@ -160,14 +228,6 @@ write:        EF 01 FF FF FF FF 01 00 03 35 00 39
 
 ---
 
-2. `ssize_t write(int fd, const void *buf, size_t count);`
-
-3. `ssize_t read(int fd, void *buf, size_t count);`
-
-4. `int close(int fd);`
-
-TODO: 再简单介绍一下 `ioctl`，以及为什么用 `tcgetattr` 替代
-
 # ZW111 模块开发
 
 这部分不想过多赘述，基本上就是照着手册开发就行。
@@ -179,6 +239,8 @@ TODO: 再简单介绍一下 `ioctl`，以及为什么用 `tcgetattr` 替代
 其余的比如 `read_sys_para` 和 `check_sensor` 之类的其实是衍生功能，比如指纹满了要删除点库存、取消本次自动验证/注册，等等，但是 `get_image` 是确实有必要的，我在开发过程中测试发现如果你不在指纹验证错误并要求重试时加入这个，并要求用户移开手指，那么指纹模组会直接开始第二次识别，也就是说可能会白白浪费很多重试次数。
 
 代码见[这里][protocol.c]
+
+## subtitle: 二、打通 “任督 PAM 脉”
 
 # PAM 模块
 
@@ -514,34 +576,6 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 那么我们现在写的 [pam_fprint_zw111](./src/pam_fprint_zw111.c) 是没有 `flock` 的，
 当然我们现在是只在 kde-fingerprint 上用，但假如我们想加到 `sudo` 这个命令呢？或者任何有可能多进程的地方呢？事实上不上锁的情况对于单进程来说是没什么问题的，然而对于多进程来说，这种设计可能引发数据竞争，导致两个/多个进程读写的数据不准( [实验参考](test/fd-test) )，考虑到这一层，我们上锁是一个必然的操作。
 
-这里并不详细介绍文件上锁，详细讲解可以参考《Linux/Unix 系统编程手册》的第 55 章，对于我们这种只想要单一时间内只让一个进程访问设备的需求，我们应当选择互斥锁 `flock(fd, LOCK_EX);`。
-
-我设计了一个指纹模块加入锁相关代码前后的对照实验，我的操作看视频，总的来说我希望两个进程都能正常完成验证：
-
-不带锁的，可以看到数据竞争可能导致卡死：
-
-NOTE: 两个视频的录像都有问题，重录
-
-![fp-zw111-test-without-lock](./images/fp-zw111-test-without-lock.webm)
-
----
-
-带锁的，进程之间先到先得，符合互斥锁的现象：
-
-![fp-zw111-test-with-lock](./images/fp-zw111-test-with-lock.webm)
-
-不上锁时需要修改的代码
-
-```
-  if (lockf(fd, F_TLOCK, 0) == -1) {
-    if (errno == EACCES || errno == EAGAIN) {
-      log_error("file: %s (fd: %d) locked!", devname, fd);
-    }
-    // fp_close(fd);
-    // return -2;
-  }
-```
-
 ```bash
 > sudo adduser "testusr"
 
@@ -562,17 +596,47 @@ recv:         EF 01 FF FF FF FF 07 00 08 00 05 00 01 04 A9 00 C2
 pamtester: successfully authenticated
 ```
 
+
+## subtitle: 三、AI 协作二三事
+
+相对来说，一些不重要的内容我会让 AI 去帮我处理。
+我还是要强调，我是 Recreational Programming，不是互联网公司这些天在搞的自动化编程，**我很重视自己到底理解了没有，如果没有这种求知的欲望和花大半天从零到一搭建一个系统的成就感，我压根就不会编程**，所以 AI 在我这里只是生成 demo 和处理琐事/分支的小助手，而不是我只需要站在旁边简单看看有没有什么大问题的数控机床（其实某种程度上来说我感觉脑力劳动的社会化大生产革命就要到来了）。
+
+一些开发 sudo 认证的小插曲:
+我发现 `pamtester` 可以通过 `^C` 中断测试，但是 `sudo` 做不到，于是一开始以为是串口的配置问题——我没把串口当控制终端、禁止了 `^C` 等控制字符的处理，后来发现不是的，就算我这么配了之后， `sudo` 照样无法被中断，于是问 deepseek，找到了 [sudo_auth 的源代码][sudo_auth.c]，然后发现**除了** sudo 自己的密码验证以外， **所有和中断/退出有关的信号都被屏蔽了**，你大爷的……
+
+```c
+/* 看注释：
+ * We treat authentication as a critical section and block
+ * keyboard-generated signals such as SIGINT and SIGQUIT
+ * which might otherwise interrupt a sleep(3).
+ * They are temporarily unblocked by auth_getpass().
+ */
+sigemptyset(&mask);
+sigaddset(&mask, SIGINT);
+sigaddset(&mask, SIGQUIT);
+(void) sigprocmask(SIG_BLOCK, &mask, &omask);
+```
+
+所以如果要在指纹验证失败的情况下要想快速 fallback 到密码上，就只能靠缩短等待时间 & 尝试次数来实现了
+
+
 ---
 
 [项目开源链接]: https://github.com/aliferne/fp-zw111-unlocker
 [vtime & vmin]: http://unixwiz.net/techtips/termios-vmin-vtime.html
+[mandatory locking]: https://www.kernel.org/doc/html/v5.14/filesystems/mandatory-locking.html
+[the mand option]: https://www.kernel.org/doc/html/v5.14/filesystems/mandatory-locking.html#the-mand-mount-option
+[the removal of mandatory lock]: https://lkml.iu.edu/hypermail/linux/kernel/2108.2/05805.html
 
 [rd_nb.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/wrrd-test/rd_nb.c
 [protocol.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/protocol.c
+[sudo_auth.c]: https://github.com/sudo-project/sudo/blob/main/plugins/sudoers/auth/sudo_auth.c
 [check errno when tcgetattr not called]: ./images/check-errno-when-tcgetattr-not-called.png
 [check errno when tcgetattr called]: ./images/check-errno-when-tcgetattr-called.png
 [fp-zw111-test-without-lock]: ./images/fp-zw111-test-without-lock.webm
 [fp-zw111-test-with-lock]: ./images/fp-zw111-test-with-lock.webm
+[useless shared lock]: ./images/useless-shared-lock.webm
 
 - 《Linux 系统编程》 Chapter 1, 2, 11
 - 《Linux/Unix 系统编程手册》 Chapter 3, 23, 55, 附录 B —— 解析命令行选项

@@ -25,11 +25,11 @@ PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
 DEFFLAGS += -DLOG_USE_COLOR
-# DEFFLAGS += -DPAM_USE_LOG_H
+DEFFLAGS += -DPAM_USE_LOG_H
 # DEFFLAGS += -DPROTOCOL_USE_LOG
 # DEFFLAGS += -DSERIAL_DEBUG_ON
 
-.PHONY: all run pam clean
+.PHONY: all run pam clean, install
 
 # all: $(MAIN_TARGET) $(PAM_TARGET) $(CLI_TARGET)
 all: $(PAM_TARGET) $(CLI_TARGET)
@@ -38,6 +38,10 @@ ARGS := -h
 run_cli: $(CLI_TARGET)
 	@./$(CLI_TARGET) $(ARGS)
 
+install: all
+	# TODO:
+	@echo "===================== linking ====================="
+	
 pam: $(PAM_TARGET)
 
 cli: $(CLI_TARGET)

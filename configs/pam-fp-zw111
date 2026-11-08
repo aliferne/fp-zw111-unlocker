@@ -29,4 +29,4 @@
 # resp_maxretry: 响应的最大尝试次数
 #                 当 `resp_block = 0` 时，若超时，最多尝试 `resp_maxretry` 次
 #                 之后直接认为验证失败
-auth sufficient pam_fprint_zw111.so resp_block=0 resp_timeout=1 resp_maxretry=3
+auth sufficient pam_fprint_zw111.so resp_block=1 resp_timeout=50 resp_maxretry=3
