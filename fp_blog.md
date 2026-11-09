@@ -195,9 +195,23 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 
 ## 如何读/写，以及为何不使用 `poll`
 
-2. `ssize_t write(int fd, const void *buf, size_t count);`
+读操作和写操作其实都是很简单的，无非就是下面的两个 API：
 
-3. `ssize_t read(int fd, void *buf, size_t count);`
+- `ssize_t write(int fd, const void *buf, size_t count);`
+- `ssize_t read(int fd, void *buf, size_t count);`
+
+但是要处理好串口的读和写是一件很麻烦的事情
+
+## 串口的特点
+
+我总结出串口应当具备如下的特点：
+
+1. 串口是数据的管道，而不是文件，数据一旦流走就不会再回来
+2. 串口应当收发纯粹二进制流，不要对数据做任何处理
+3. 串口文件是一种独占资源，同一时间段内可以允许多个进程/线程读，但绝不允许多个进程/线程写
+4. 串口可能断连，因此需要考虑读写数据的稳定性
+
+
 
 ## 解锁和关闭串口文件
 
@@ -205,16 +219,37 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 - `lockf(fd, F_ULOCK, 0);`
 
 关闭串口文件：
-- `int close(int fd);`
+- `close(fd);`
 
+这里没什么要说的，就是检查下 `fd` 是合法的( >= 0 )，然后先解锁再关文件就行。
+
+当然这是一个比较粗粒度的同步措施，在这种假设下我们认为一个进程直到结束之前都不应该释放串口资源给其他进程使用，如果想要一个细粒度的并发，那么就可以在这方面下手，当然对于验证程序来说也确实要一直验证直到结束才能释放串口资源，所以我选择了一个粗粒度的措施。
+
+# ZW111 模块开发
+
+- [产品规格][zw111 datasheets]
+- [用户手册][zw111 user manual]
+
+这部分不想过多赘述，基本上就是照着手册开发就行。
+
+从需求的角度上来说我们需要开发的功能实际上只有：
+- 注册指纹(`auto_enroll`)
+- 验证指纹(`auto_identify`)
+
+其余的比如 `read_sys_para` 和 `check_sensor` 之类的其实是衍生功能(所以我这里就没有对应的支持，比如 `read_sys_para` 读下来的数据我并没有去做解析)，比如指纹满了要删除点库存、取消本次自动验证/注册，等等，但是 `get_image` 是确实有必要的，我在开发过程中测试发现如果你不在指纹验证错误并要求重试时加入这个，并要求用户移开手指，那么指纹模组会直接开始第二次识别，也就是说可能会白白浪费很多重试次数。
+
+代码见[这里][protocol.c]，此外基于这套代码，我让 AI 生成了一个[命令行程序][cli.c]，用于快速录入指纹等。
 
 ## 总结
 
 最后我们再来梳理一下整体的流程：
 
-打开串口文件 -> 确认文件是 tty 设备[可选] -> 给文件加锁 -> 配置串口选项 -> 返回文件描述符
+- 打开串口文件 -> 确认文件是 tty 设备[可选] -> 给文件加锁 -> 配置串口选项 -> 返回文件描述符
+- 在锁内对串口文件进行各种读写操作
+- 检验 `fd` 是否合法 -> 解锁 -> 关闭文件
 
-这就是 [protocol.c][protocol.c] 中 `fp_open` 函数的基本思路，那么 `fp_close` 实际上就是对称的关系：先解锁再关闭文件。
+自此整个 Linux 串口和系统编程部分也就结束了，下一章节我们将聚焦于 PAM 模块的开发，以及与 KDE 锁屏
+kscreenlocker 和 Root 验证程序 sudo 的联动，敬请期待！
 
 ---
 
@@ -227,18 +262,6 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 - 读？ => 一次性读完/分大小读？
 
 ---
-
-# ZW111 模块开发
-
-这部分不想过多赘述，基本上就是照着手册开发就行。
-
-从需求的角度上来说我们需要开发的功能实际上只有：
-- 注册指纹(auto_enroll)
-- 验证指纹(auto_identify)
-
-其余的比如 `read_sys_para` 和 `check_sensor` 之类的其实是衍生功能，比如指纹满了要删除点库存、取消本次自动验证/注册，等等，但是 `get_image` 是确实有必要的，我在开发过程中测试发现如果你不在指纹验证错误并要求重试时加入这个，并要求用户移开手指，那么指纹模组会直接开始第二次识别，也就是说可能会白白浪费很多重试次数。
-
-代码见[这里][protocol.c]
 
 ## subtitle: 二、打通 “任督 PAM 脉”
 
@@ -631,7 +654,11 @@ sigaddset(&mask, SIGQUIT);
 
 [rd_nb.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/wrrd-test/rd_nb.c
 [protocol.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/protocol.c
+[cli.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/cli.c
 [sudo_auth.c]: https://github.com/sudo-project/sudo/blob/main/plugins/sudoers/auth/sudo_auth.c
+
+[zw111 datasheets]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/docs/ZW111%E5%8D%8A%E5%AF%BC%E4%BD%93%E6%8C%87%E7%BA%B9%E5%A4%84%E7%90%86%E6%A8%A1%E5%9D%97%E8%A7%84%E6%A0%BC%E4%B9%A6V1.2.pdf
+[zw111 user manual]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/docs/%E6%8C%87%E7%BA%B9%E6%A8%A1%E7%BB%84%E4%BA%A7%E5%93%81%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C_V1.5.1.pdf
 [check errno when tcgetattr not called]: ./images/check-errno-when-tcgetattr-not-called.png
 [check errno when tcgetattr called]: ./images/check-errno-when-tcgetattr-called.png
 [fp-zw111-test-without-lock]: ./images/fp-zw111-test-without-lock.webm
