@@ -43,6 +43,17 @@ TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
 
 ## subtitle: 一、从串口到协议
 
+# 串口的特点
+
+虽然这可能有些马后炮，但是这些都是在我写代码实际实践的过程中逐渐认识到的，这里必须要先提前放出来：
+
+1. 串口是数据的管道，而不是文件，数据一旦流走就不会再回来
+2. 串口应当收发纯粹二进制流，不要对数据做任何处理
+3. 串口文件是一种独占资源，同一时间段内可以允许多个进程/线程读，但绝不允许多个进程/线程写
+4. 串口可能断连，因此需要考虑读写数据的稳定性
+
+特别的，对于指纹模组这种一问一/多答的设备，同一时间段只能有一个进程/线程读写.
+
 # Linux 串口编程与文件 IO
 
 在正式进入主题之前，我们需要先了解一下什么是系统调用：
@@ -60,7 +71,7 @@ TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
 - `int open(const char *pathname, int flags);`
 
 这个函数我相信不需要过多的介绍，`pathname` 就是文件路径，而 `flags` 就是打开文件的标志位。
-我们需要用到的 `flag`: `O_RDWR`, `O_NOCTTY`, `O_NONBLOCK`
+我们需要用到的 `flag`: `O_RDWR`, `O_NOCTTY`, `O_NONBLOCK`(非阻塞用于实验，实际上我们需要阻塞)
 
 我们需要读写串口，因此需要使用 `O_RDWR` 打开串口文件，而由于 Linux 会将串口抽象为 tty 设备，也就意味着默认情况下，系统可能会把串口当作一个控制终端来用，因此就可能能够发送一些特殊的控制字符，比如 `^C`，由于实际我们去使用的时候并不会发送这些特殊控制字符，因此需要借助 `O_NOCTTY` 关闭这一选项。
 
@@ -119,7 +130,7 @@ write:        EF 01 FF FF FF FF 01 00 03 35 00 39
 3. `vtime = 0, vmin > 0`: 此时要求至少收集到 vmin 个字节后才返回，因此少于 vmin 个字节的行为是未定义的
 4. `vtime > 0, vmin > 0`: 此时要求只要拿到 vmin 个字节，或者到了 vtime 要求的时间， read 就会成功返回
 
-需要注意由于 `vtime`, `vmin` 和 `O_NONBLOCK` 是矛盾的，因此如果设置 **非阻塞** 读，这两个变量就必须要是 0, 不然会导致读越界的 SegFault 问题(我没去琢磨源码，如果有知道原因的大佬还请不吝赐教😁)。篇幅原因我们只需要了解上面这些内容就足够了，如果想要了解更多东西，可以参考[这篇文章][vtime & vmin]
+需要注意由于 `vtime`, `vmin` 和 `O_NONBLOCK` 是矛盾的，因此如果设置 **非阻塞** 读，这两个变量就必须要是 0, 不然会导致读越界的 SegFault 问题(我没去琢磨源码，如果有知道原因的大佬还请不吝赐教)。篇幅原因我们只需要了解上面这些内容就足够了，如果想要了解更多东西，可以参考[这篇文章][vtime & vmin]
 
 对于第二点，实际上我们有一个很好用的检测设备是否断连的方法，我们只需要借助 `tcgetattr` 即可，这个函数在尝试获取串口配置失败时会返回 -1, 并设置 errno 为一些特定的值，如果 `errno == EIO`，那么一般就是串口断连了。严谨一些的话可以用 `poll`，但是我没用，这里会在后面解释 TODO:
 
@@ -200,18 +211,29 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 - `ssize_t write(int fd, const void *buf, size_t count);`
 - `ssize_t read(int fd, void *buf, size_t count);`
 
-但是要处理好串口的读和写是一件很麻烦的事情
+但是要处理好串口的读和写是一件很麻烦的事情，原因在于上面提到的 [串口的特点](#串口的特点) ，设备可能断连，因此需要考虑部分读/部分写，但是如果你实际去看我的代码就会发现我其实并没有这么干，原因是因为 ~~我懒~~ 这里要读写的字节数量实际上比较少，我个人判断不太需要部分读/部分写。
 
-## 串口的特点
+我们一直使用的都是默认配置： 57.6kbps 波特率， 8 数据位， 1
+停止位，无校验，对于最简单的一帧数据构成：包头 + 设备地址 + 包标识 + 包长度 + 指令 + 0 数据 +
+校验和， 总字节长度：(1 + 8 + 1) * (2 + 4 + 1 + 2 + 1 + 2) = 120 bits, 因此一帧数据的发送/接收时长：0.120 / 57.6 = 0.002083 = 2ms 这么短的窗口期，设备比较难刚刚好就在收发数据时断连，因此我们更多要考虑的应该是断连后的重连问题。
 
-我总结出串口应当具备如下的特点：
+至于为什么不用 `poll`，那就需要看看 `poll` 是做什么的了：
 
-1. 串口是数据的管道，而不是文件，数据一旦流走就不会再回来
-2. 串口应当收发纯粹二进制流，不要对数据做任何处理
-3. 串口文件是一种独占资源，同一时间段内可以允许多个进程/线程读，但绝不允许多个进程/线程写
-4. 串口可能断连，因此需要考虑读写数据的稳定性
+- `int poll(struct pollfd *fds, nfds_t nfds, int timeout);`
 
+```linux man page
+DESCRIPTION
+       poll()  performs  a similar task to select(2): it waits for one of a set of file descriptors to become
+       ready to perform I/O.  The Linux-specific epoll(7) API performs a similar task,  but  offers  features
+       beyond those found in poll().
+```
 
+因此 `poll` 实际上是为了解决 IO 多路复用的问题而存在的，但我们这里只有单路 IO，因此如果你用 `poll`，那么只能说明你看上了它的如下两点：
+
+1. `timeout` 超时机制：可以由 `vtime` & `vmin` 解决
+2. 设备断连检测(`struct pollfd` 中的 `revents`)：可以由 `tcgetattr` & `errno` 解决
+
+因此这里没理由用 `poll`。
 
 ## 解锁和关闭串口文件
 
@@ -240,7 +262,7 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 
 代码见[这里][protocol.c]，此外基于这套代码，我让 AI 生成了一个[命令行程序][cli.c]，用于快速录入指纹等。
 
-## 总结
+# 总结
 
 最后我们再来梳理一下整体的流程：
 
@@ -250,16 +272,6 @@ Linux 的文件锁分为劝告锁和 [强制锁][mandatory locking] 两种，**�
 
 自此整个 Linux 串口和系统编程部分也就结束了，下一章节我们将聚焦于 PAM 模块的开发，以及与 KDE 锁屏
 kscreenlocker 和 Root 验证程序 sudo 的联动，敬请期待！
-
----
-
-思考串口通信，并将这些点融入文章中
-
-- 串口设备文件 IO 需要考虑多进程？ => 互斥锁 (lockf)
-- 设备插拔断联导致的异常应当怎么处理？
-- 读需要读超时？ => 设备超时帧/代码设定的超时时间
-- 写？ => 一次性写入/分大小写？
-- 读？ => 一次性读完/分大小读？
 
 ---
 
@@ -294,7 +306,7 @@ PAM 配置文件有一定的语法规则，由于配置文件的相关资料很�
 sudo apt install libpam-dev -y
 ```
 
-编写 [pam_auth_test.c](./test/pam-test/pam_auth_test.c) 文件，我们这里只作为测试用，需要注意永远不要明文将密钥写入代码中，比如下面用 ltrace 去看的：
+编写 [pam_auth_test.c][pam_auth_test.c] 文件，我们这里只作为测试用，需要注意永远不要明文将密钥写入代码中，比如下面用 ltrace 去看的：
 
 ```bash
 > ltrace -e strcmp ./test_pam pam-auth-test ss ss 2>&1 | grep "pam_auth_test.so"
@@ -340,12 +352,12 @@ EOF
 sudo ln $(pwd)/pam-auth-test /etc/pam.d
 ```
 
-这样子通路就基本搭建完毕了，然后我们接下来自己写一个 [应用程序](./pam_auth_test.c)
+这样子通路就基本搭建完毕了，然后我们接下来自己写一个 [应用程序][test_pam.c]
 
 然后编译：
 
 ```bash
-gcc -o pam_auth_test.c test_pam -lpam
+gcc -o test_pam.c test_pam -lpam
 ```
 
 接下来运行：
@@ -394,14 +406,24 @@ KDE 本身自带一个锁屏登录模块，而刚开机时则一般由 SDDM 或�
 
 KDE 和 SDDM 各自会占用一个 tty， SDDM 在验证通过之后你再切过去 (ctrl + alt + fx, x 是多少自己试一下就知道了) 会发现是卡死的，不过这点对于我们接下来要做的事来说不重要。
 
-首先还是老规矩，简单编写一个[模块](./test/pam-test/pam_kde_auth_test.c)并链接过去，然后测试一下
+首先还是老规矩，简单编写一个[模块][pam_kde_auth_test.c] 并链接过去，然后测试一下
 
 ```bash
 # 这里测完之后记得删掉
 > gcc -fPIC -shared -o pam_kde_auth_test.so pam_kde_auth_test.c && sudo ln $(pwd)/pam_kde_auth_test.so /lib/x86_64-linux-gnu/security
 ```
 
-注意， KDE 的 PAM 服务文件在 `/usr/lib/pam.d` 里面，你 `ls` 之后会发现有三个 kde 相关的，分别对应三种解锁方式：密码，指纹，卡片，这三个验证方式是独立的，任意一个验证成功都能解锁，而我们之前一直在讲的都是 `/etc/pam.d` 里面的文件，那么这里就有个配置文件查询优先级的问题，一般是 `/etc/pam.d` 里面的优先调用，我们接下来修改 `kde-fingerprint` 即可，其他的别动：
+注意， KDE 的 PAM 服务文件在 `/usr/lib/pam.d` 里面，你 `ls` 之后会发现有三个 kde 相关的，分别对应三种解锁方式：密码，指纹，卡片，这三个验证方式是独立的，任意一个验证成功都能解锁。
+
+但是我们之前一直在讲的都是 `/etc/pam.d` 里面的文件，那么这里就有个配置文件查询优先级的问题，KDE 的这个 PAM 模块是先找 `/etc/pam.d` 有没有对应文件，如果没有就回退到 `/usr/lib/pam.d` 里面。
+
+因此现在让我们把文件复制过去
+
+```bash
+> cp /usr/lib/pam.d/kde-fingerprint /etc/pam.d/kde-fingerprint
+```
+
+然后编辑：
 
 ```plain text
 # ...
@@ -410,7 +432,7 @@ auth    required        pam_kde_auth_test.so  # 这个是我们添加的
 # ...
 ```
 
-然后借助 `pamtester`， 我们来调用下这个服务测试一下：
+再借助 `pamtester`， 我们来调用下这个服务测试一下：
 
 ```bash
 > sudo pamtester -v kde-fingerprint $USER authenticate
@@ -429,21 +451,13 @@ Password: ^C
 10月 19 20:50:42 fernelaptop kwin_wayland_wrapper[219614]: [kde_authtest] called
 ```
 
-因此解锁这个过程肯定会和 kde-fingerprint 这个服务有点关系，尽管这里写的是 `kwin_wayland_wrapper` 的日志
-
-我们这样子只是验证了这样子配置是 OK 的，自己编写的模块会被调用，而现在我们需要的是要自己定制一下，我之前提到了配置文件优先级的一个问题，现在我们把东西复制过去：
-
-```bash
-> cp /usr/lib/pam.d/kde-fingerprint /etc/pam.d/kde-fingerprint
-```
-
-然后还原在 `/usr/lib/pam.d/kde-fingerprint` ，再打开刚复制过去的文件，把上面自己写的那个配置项的 `<flag>` 从 required 改成 sufficient，然后你锁屏后再打开，就会发现不需要输入密码了。
+然后再把 `<flag>` 从 `required` 改成 `sufficient`，保存，此时如果你锁屏的话，就会发现直接就能解锁：
 
 TODO:
 ![][]
 
-接下来我会建议注释原来的 `pam_fprintd.so` 选项，改用自己自定义的 `.so` 作为指纹模块：
-TODO: 这里是否可以借鉴： `auth    required        pam_succeed_if.so user != root quiet_success` 的编辑思路来实现两个文件其中一个参与？
+接下来，删除 `pam_kde_auth_test.so`，那一行，这里我会建议注释原来的 `pam_fprintd.so` 选项，改用自己自定义的 `.so` 作为指纹模块：
+TODO: 这里是否可以借鉴： `auth required pam_succeed_if.so user != root quiet_success` 的编辑思路来实现两个文件其中一个参与？
 
 ```plain text
 #auth	  required	      pam_fprintd.so
@@ -460,6 +474,7 @@ auth    required        pam_fprint_zw111.so  # 这个是我们添加的
 
 # 打通 “任督 PAM 脉”
 
+TODO: 这里似乎把设备号写的太具体了，导致换 USB 接口的话，这个规则就不生效了
 需要固定设备名称，不然很不方便，udev 规则，这里直接放博客链接，不详细写
 
 ```bash
@@ -655,6 +670,9 @@ sigaddset(&mask, SIGQUIT);
 [rd_nb.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/wrrd-test/rd_nb.c
 [protocol.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/protocol.c
 [cli.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/cli.c
+[pam_auth_test.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/pam_auth_test.c
+[test_pam.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/test_pam.c
+[pam_kde_auth_test.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/pam_kde_auth_test.c
 [sudo_auth.c]: https://github.com/sudo-project/sudo/blob/main/plugins/sudoers/auth/sudo_auth.c
 
 [zw111 datasheets]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/docs/ZW111%E5%8D%8A%E5%AF%BC%E4%BD%93%E6%8C%87%E7%BA%B9%E5%A4%84%E7%90%86%E6%A8%A1%E5%9D%97%E8%A7%84%E6%A0%BC%E4%B9%A6V1.2.pdf
