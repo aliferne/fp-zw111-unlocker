@@ -26,20 +26,17 @@
 
 # 项目架构
 
-因此一开始是硬件的调研，我想知道有什么指纹模组可以给我开发，于是问了 deepseek 之后决定搞个 ZW111 模块来玩，这玩意加上一个 USB 转 TTL 也就 30 块，市面上的 Windows Hello 模组大概是四五十到一百都有。
+这里的项目架构，我会先提到一堆名词和概念，不过这些概念会随着博客的深入被逐一解决，因此不必担心。
 
-然后拿到数据手册，脑子里面便大概有了一些开发的方向，我个人角度上认为这一部分主要有 4 个递进的任务： Linux 串口配置(`termios.h`) -> Linux 串口通信(`fcntl.h` 等) -> 实现数据手册规定协议 -> 测试功能
+首先是硬件的调研，参考 deepseek 和 pdd 上的价格，最后决定使用 HLK 的 ZW111 + 常见的 CH340C USB 转 TTL 作为指纹模组，大约三十元，而市面上常见的 Windows Hello 大概是四五十到一百不等，图省事的话直接买 Windows Hello 就行，不过我用 Linux, 也想学下 Linux 系统编程等知识，于是就开始折腾起来了。
 
-我们需要了解一下整个任务涉及到的部分：
+那么整个项目架构分为两部分，对应文章也是两章（第三章是讲与 AI 的合作的），
 
-Linux 串口配置 -> 与 ZW111 的通信 -> 开发属于 ZW111 的 PAM 模块 -> 配置关键文件，使 libpam 能够与自己的 PAM 模块交互
+1. 从串口到协议: [Linux 串口编程][serial.c] -> [ZW111 模块通信(Linux 系统编程)][protocol.c] -> [命令行程序][cli.c]
+2. PAM 模块与应用认证: [ZW111 模块通信(Linux 系统编程)][protocol.c] -> [PAM 模块联通][pam_fprint_zw111.c] -> 客制化配置文件以对接 PAM 和应用程序
 
-涉及到 KDE 的部分: kscreenlocker
-
-PAM 模块借助 conv_func 机制 -> 讲解如何编写 PAM Application
-编辑 KDE 的 QML 文件 -> kscreenlocker 源码， Qt 的 Signal 机制，`Q_EMIT`，观察 `conv_func` -> 修改 QML 对应部分
-
-TODO: 将 PAM 模块的原理放在这里比较合适？此外画图图解一下
+而具体的，我们又会涉及到各个模块设计的一些点，这些我就不放在这里说了，整体的项目架构要解决的只有三件事：
+如何与 ZW111 模块通信; 如何将 ZW111 模块串入 PAM 模块; 如何将自定义 PAM 模块对接到需要认证系统的程序中
 
 ## subtitle: 一、从串口到协议
 
@@ -281,7 +278,7 @@ kscreenlocker 和 Root 验证程序 sudo 的联动，敬请期待！
 
 ## PAM 基本流程和简易模块开发
 
-网上看到的简中 PAM 模块教程基本上都是只有配置文件的，但是我们要写 ZW111 的指纹识别模块的话需要串起配置文件和模块开发的流程，因此需要借助一手资料，下面已经列举出了。
+网上简中博客的 PAM 模块相关资料以 [配置文件][pam module config file] 居多，并不涉及如何开发 `so` 动态库，因此本章将结束这一局面，根据 [一手资料][libpam-wiki] 再结合自己的理解写一篇模块开发教程。
 
 ---
 
@@ -298,12 +295,11 @@ PAM 配置文件有一定的语法规则，由于配置文件的相关资料很�
 
 ---
 
-下面是具体的实验方法
-
-首先需要先安装 libpam：
+在开发 PAM 模块之前，首先需要先安装 libpam：
 
 ```bash
-sudo apt install libpam-dev -y
+# PAM 开发模块名称取决于发行版，请善用 tab 键
+sudo apt install libpam0g-dev -y
 ```
 
 编写 [pam_auth_test.c][pam_auth_test.c] 文件，我们这里只作为测试用，需要注意永远不要明文将密钥写入代码中，比如下面用 ltrace 去看的：
@@ -313,11 +309,12 @@ sudo apt install libpam-dev -y
 pam_auth_test.so->strcmp("ss", "test", 4)       = -1
 ```
 
-然后一眼就知道密码是什么了
+一眼就知道密码是什么了
 
 然后编译，注意需要编译成共享库：
 
 ```bash
+# 这是共享库，因此不需要链接 pam 模块 TODO: why?
 gcc -fPIC -shared -o pam_auth_test.so pam_auth_test.c
 ```
 
@@ -353,10 +350,12 @@ sudo ln $(pwd)/pam-auth-test /etc/pam.d
 ```
 
 这样子通路就基本搭建完毕了，然后我们接下来自己写一个 [应用程序][test_pam.c]
+TODO: 讲解 PAM 模块通信机制，方便理解下文的 kscreenlocker
 
 然后编译：
 
 ```bash
+# 注意链接 pam 库
 gcc -o test_pam.c test_pam -lpam
 ```
 
@@ -372,7 +371,7 @@ gcc -o test_pam.c test_pam -lpam
 pam_authenticate -> 0 (Success)
 ```
 
-但是我们测试还是会用更加成熟的 `pamtester`，首先安装它
+但是我们测试还是会用更加成熟的 [pamtester][pamtester-doc] ，首先安装它
 
 ```bash
 > sudo apt install pamtester -y
@@ -453,7 +452,7 @@ Password: ^C
 
 然后再把 `<flag>` 从 `required` 改成 `sufficient`，保存，此时如果你锁屏的话，就会发现直接就能解锁：
 
-TODO:
+TODO: 加入图片
 ![][]
 
 接下来，删除 `pam_kde_auth_test.so`，那一行，这里我会建议注释原来的 `pam_fprintd.so` 选项，改用自己自定义的 `.so` 作为指纹模块：
@@ -530,8 +529,6 @@ pamtester: successfully authenticated
 注意 `clock_gettime` 需要 gnu99，即需要定义 POSIX 标准，不能是 STRICT_ANSI 模式
 
 `/lib/x86_64-linux-gnu/libexec/kscreenlocker_greet --testing`
-
-稍稍改了一下之前 AI 生成的 cli.c，有很多功能没完善，但是雏形有了，已经很方便了
 
 查了一下发现可以通过 `pam_error` 来让锁屏界面显示一些提示信息
 于是 `pam_error(pamh, "你还有 %d 次重试机会", MAX_RETRY - retry);`
@@ -611,8 +608,7 @@ comments: 这部分是当时代码里面新加了 `TestLabel` 的片段，酌情
 我写了个 [pam-fp-zw111](./test/pam_test/pam-fp-zw111)，然后链接过去
 接下来测试就可以 `pamtester pam-fp-zw111 $USER authenticate` 来写，更方便
 
-那么我们现在写的 [pam_fprint_zw111](./src/pam_fprint_zw111.c) 是没有 `flock` 的，
-当然我们现在是只在 kde-fingerprint 上用，但假如我们想加到 `sudo` 这个命令呢？或者任何有可能多进程的地方呢？事实上不上锁的情况对于单进程来说是没什么问题的，然而对于多进程来说，这种设计可能引发数据竞争，导致两个/多个进程读写的数据不准( [实验参考](test/fd-test) )，考虑到这一层，我们上锁是一个必然的操作。
+TODO: 讲解 PAM 模块的安全问题
 
 ```bash
 > sudo adduser "testusr"
@@ -666,10 +662,15 @@ sigaddset(&mask, SIGQUIT);
 [mandatory locking]: https://www.kernel.org/doc/html/v5.14/filesystems/mandatory-locking.html
 [the mand option]: https://www.kernel.org/doc/html/v5.14/filesystems/mandatory-locking.html#the-mand-mount-option
 [the removal of mandatory lock]: https://lkml.iu.edu/hypermail/linux/kernel/2108.2/05805.html
+[pam module config file]: https://zhuanlan.zhihu.com/p/663757925
+[libpam-wiki]: http://www.fifi.org/doc/libpam-doc/html
+[pamtester-doc]: https://pamtester.sourceforge.net/
 
 [rd_nb.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/wrrd-test/rd_nb.c
+[serial.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/serial.c
 [protocol.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/protocol.c
 [cli.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/cli.c
+[pam_fprint_zw111.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/src/pam_fprint_zw111.c
 [pam_auth_test.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/pam_auth_test.c
 [test_pam.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/test_pam.c
 [pam_kde_auth_test.c]: https://github.com/aliferne/fp-zw111-unlocker/blob/main/test/pam-test/pam_kde_auth_test.c
@@ -687,14 +688,10 @@ sigaddset(&mask, SIGQUIT);
 - 《Linux/Unix 系统编程手册》 Chapter 3, 23, 55, 附录 B —— 解析命令行选项
 - 《嵌入式 Linux 开发教程》（上） Chapter 16
 
-1. https://zhuanlan.zhihu.com/p/663757925
-2. https://wiki.archlinux.org.cn/title/PAM
-3. flag fPIC: https://zhuanlan.zhihu.com/p/368364069
+1. https://wiki.archlinux.org.cn/title/PAM
+2. flag fPIC: https://zhuanlan.zhihu.com/p/368364069
    同时 fPIC 选项可以参考 CSAPP 的第七章
-4. gettext, msg(un)fmt command: https://www.cnblogs.com/jjxhp/p/12036187.html
+3. gettext, msg(un)fmt command: https://www.cnblogs.com/jjxhp/p/12036187.html
 
 下面这些是一手资料，质量更好：
 
-1. http://www.fifi.org/doc/libpam-doc/html
-2. Linux man page of pam (`man pam`)
-3. pamtester: https://pamtester.sourceforge.net/
