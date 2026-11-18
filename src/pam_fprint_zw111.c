@@ -58,24 +58,24 @@ static enum wait_stat _open_dev(void *ctx) {
 
 static enum wait_stat pam_remove_finger(void *ctx) {
   static bool warned = false;
-  enum wait_stat ret = WAIT_DONE;
   struct pam_dev_ctx *pCtx = ctx;
   const pam_handle_t *pamh = pCtx->pamh;
 
   uint8_t dev_status = fp_get_image(pCtx->fd);
   /* 如果检测有手指就提醒，其他情况均认为是函数返回失败 */
   if (FP_IS_STATUS(dev_status, FP_OK)) {
-    ret = WAIT_AGAIN;
     if (warned == false) {
       log_warn("Please remove your finger");
       pam_info(pCtx->pamh, "请先移开你的手指");
       warned = true;
     }
+    return WAIT_AGAIN;
   } else if (!FP_IS_STATUS(dev_status, FP_NO_FINGER)) {
-    ret = WAIT_FAIL;
+    return WAIT_FAIL;
   }
 
-  return ret;
+  warned = false; // reset warned
+  return WAIT_DONE;
 }
 
 static bool pam_connect_dev(pam_handle_t *pamh, struct pam_dev_ctx *pCtx,
@@ -187,18 +187,17 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   pam_info(pamh, "指纹模块已连接，可以指纹识别");
   log_info("please place your finger on the module");
 
-  /* 此处表示以置信度 2 (较为常用) 的等级遍历所有指纹，只要找到符合的就返回
-     FP_OK 这意味着只要有人录入指纹，他就可以解锁 Linux PC
-     上任何一个用户，这当然是不安全的，
-     但我的场景只是自用，因此不考虑这些安全问题。
-     毕竟如果真要安全的话就不会选择自己 DIY 了(doge) */
   status = fp_check_sensor_state(*pfd);
 
+  /* 此处表示以置信度 2 (较为常用) 的等级遍历所有指纹，
+     只要找到符合的就返回 FP_OK 
+     这意味着只要有人录入指纹，他就可以解锁 Linux PC 上任何一个用户，这当然是不安全的，
+     但我的场景只是自用，因此不考虑这些安全问题 */
   while ((status = fp_auto_identify(*pfd, 2, 0xFFFF, true, false)) != FP_OK) {
     delay_ms(100);
 
     switch (status) {
-    // 这种情况是设备/poll 超时
+    // 这种情况是设备超时
     case FP_TIMEOUT:
       log_warn("identify timeout, retrying...");
 
@@ -229,7 +228,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
         goto cleanup;
       }
 
-      wst = exec_fn_until(MAX_TIMEOUT, 500, pam_remove_finger, &pCtx);
+      wst = exec_fn_until(MAX_TIMEOUT, 200, pam_remove_finger, &pCtx);
       if (wst != WAIT_DONE) {
         log_error("ask for removing finger failed (wstatstr: %s)",
                   wstatstr(wst));

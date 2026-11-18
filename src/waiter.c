@@ -1,7 +1,7 @@
 #include "waiter.h"
 #include <errno.h>
-#include <time.h>
 #include <unistd.h>
+#include <time.h>
 
 long mono_ms() {
   struct timespec now;

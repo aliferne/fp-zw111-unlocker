@@ -12,11 +12,11 @@
 #
 # 这几个文件都要求的是输入密码，并且是 `required` 控制的，
 # 如果我想要绕过密码验证，直接指纹，就必须要用 `sufficient`
-# 那么我是在这几个文件上面加上
-# `@include pam-fp-zw111`
-# 来绕过的。
+# 那么我是在这几个文件上面加上 `@include pam-fp-zw111` 来绕过。
 # 这之后就千万不要手贱重命名 `pam-fp-zw111` 这个文件了
 # 不然就会遇到 [图片](../images/sudo-pam-file-not-found.png) 的情况
+# 此时可以借助 pkexec 恢复(KDE 环境下)
+# 我建议把该文件作为一个使用的参考范例，不要直接包含该文件
 #
 # 如果指纹验证失败就会自动 fallback 到密码验证上，
 # 因此不需要担心进不了 sudo
@@ -27,6 +27,7 @@
 # resp_block: 响应超时是否阻塞整个 PAM 验证过程(如果超时则一直超时，不退出)
 # resp_timeout: 每次响应的超时时长(0 ~ 255, 单位 0.1s) 
 # resp_maxretry: 响应的最大尝试次数
-#                 当 `resp_block = 0` 时，若超时，最多尝试 `resp_maxretry` 次
-#                 之后直接认为验证失败
+#                当 `resp_block = 0` 时，若超时，最多尝试 `resp_maxretry` 次
+#                之后直接认为验证失败
 auth sufficient pam_fprint_zw111.so resp_block=1 resp_timeout=50 resp_maxretry=3
+

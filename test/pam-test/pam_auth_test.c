@@ -1,6 +1,5 @@
 #define PAM_SM_AUTH
 #define PAM_SM_ACCOUNT
-
 #include <security/pam_appl.h>
 #include <security/pam_ext.h>
 #include <security/pam_modules.h>

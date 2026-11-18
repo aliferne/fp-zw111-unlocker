@@ -17,16 +17,17 @@ APP_SRCS := $(CORE_SRCS) $(MAIN_SRC)
 # 生成目标文件
 OBJS := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(APP_SRCS))
 MAIN_TARGET := $(BUILD_DIR)/fingerprint
-PAM_TARGET := $(BUILD_DIR)/pam_fprint_zw111.so
+PAM_DL_NAME := pam_fprint_zw111.so
+PAM_TARGET := $(BUILD_DIR)/$(PAM_DL_NAME)
 CLI_TARGET := $(BUILD_DIR)/cli
 
-CFLAGS := -Wall -Wextra -O2 -g -std=gnu99
+CFLAGS := -Wall -Wextra -O2 -g
 PAM_CFLAGS := $(CFLAGS) -fPIC -shared
 # LIBFLAGS := -lrt
 INCFLAGS := -I$(INC_DIR)
 DEFFLAGS += -DLOG_USE_COLOR
-DEFFLAGS += -DPAM_USE_LOG_H
-# DEFFLAGS += -DPROTOCOL_USE_LOG
+#DEFFLAGS += -DPAM_USE_LOG_H
+#DEFFLAGS += -DPROTOCOL_USE_LOG
 # DEFFLAGS += -DSERIAL_DEBUG_ON
 
 .PHONY: all run pam clean, install
@@ -38,10 +39,38 @@ ARGS := -h
 run_cli: $(CLI_TARGET)
 	@./$(CLI_TARGET) $(ARGS)
 
+PWD := $(shell pwd)
+FP_RULES_FILE := fprint_zw111.rules
+PAM_FP_SRV_FILE := pam-fp-zw111
+PAM_KDE_SRV_FILE := kde-fingerprint
+
 install: all
-	# TODO:
-	@echo "===================== linking ====================="
-	
+	@echo "===================== copying pam target ====================="
+	# delete whether it exists or not
+	sudo rm -f /usr/lib/x86_64-linux-gnu/security/$(PAM_DL_NAME)
+	# if sudo used this module, directly copying leads to core dumped. so delete first
+	sudo cp $(PWD)/$(PAM_TARGET) /usr/lib/x86_64-linux-gnu/security/$(PAM_DL_NAME) 
+	@echo "===================== doing security settings ====================="
+	sudo chmod 644 /usr/lib/x86_64-linux-gnu/security/$(PAM_DL_NAME)
+	@echo "===================== copying config files ====================="
+	sudo cp $(PWD)/configs/$(FP_RULES_FILE)    /etc/udev/rules.d/$(FP_RULES_FILE) 
+	# this can be optional
+	# sudo cp $(PWD)/configs/$(PAM_FP_SRV_FILE)  /etc/pam.d/$(PAM_FP_SRV_FILE) 
+	sudo cp $(PWD)/configs/$(PAM_KDE_SRV_FILE) /etc/pam.d/$(PAM_KDE_SRV_FILE)
+	@echo "===================== doing security settings ====================="
+	# sudo chmod 644 /etc/pam.d/$(PAM_FP_SRV_FILE) 
+	sudo chmod 644 /etc/pam.d/$(PAM_KDE_SRV_FILE)
+	@echo "===================== reloading udev rules ====================="
+	sudo udevadm control --reload-rules && sudo udevadm trigger
+	# sleep for settings work
+	sleep 2
+	@echo -n "===================== "
+	@echo -n "checking if udev rules ok, you should see "
+	@echo -n "it pointing at ttyUSBx or something, "
+	@echo -n "if not, please remake or check if $(FP_RULES_FILE) is correct "
+	@echo -n "=====================\n"
+	ls -l /dev/FP_ZW111
+
 pam: $(PAM_TARGET)
 
 cli: $(CLI_TARGET)
